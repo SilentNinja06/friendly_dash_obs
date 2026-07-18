@@ -3217,6 +3217,7 @@ var DailyDashPlugin = class extends import_obsidian19.Plugin {
     this.registerEvent(this.app.vault.on("delete", () => this.scheduleRefresh()));
     this.registerEvent(this.app.vault.on("rename", () => this.scheduleRefresh()));
     this.app.workspace.onLayoutReady(() => {
+      this.rebuildOpenViews();
       void this.loadDirectives().then(() => this.refreshOpenViews("vault"));
       this.registerEvent(
         this.app.workspace.on("active-leaf-change", (leaf) => this.maybeReplaceEmptyLeaf(leaf))

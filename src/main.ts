@@ -79,6 +79,13 @@ export default class DailyDashPlugin extends Plugin {
 		// Everything that reads/writes the vault or touches the workspace waits
 		// until it is ready.
 		this.app.workspace.onLayoutReady(() => {
+			// A dashboard leaf can be re-created during `registerView` (above) —
+			// which runs before settings finish loading, so a plugin hot-reload (a
+			// BRAT update, or toggling the plugin) can build the view from DEFAULT
+			// settings, showing panels the user had hidden. Now that settings are
+			// loaded, rebuild any open view so its panel set matches the saved
+			// show/hide state.
+			this.rebuildOpenViews();
 			void this.loadDirectives().then(() => this.refreshOpenViews("vault"));
 			this.registerEvent(
 				this.app.workspace.on("active-leaf-change", (leaf) => this.maybeReplaceEmptyLeaf(leaf))
