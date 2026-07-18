@@ -7,6 +7,7 @@ import { JournalPanel } from "./journal";
 import { MealsPanel } from "./meals";
 import { SearchPanel } from "./search";
 import { SecondBrainPanel } from "./secondbrain";
+import { CalendarPanel } from "./calendar";
 import { PlacesPanel } from "./places";
 
 /** Registration order = default panel order. Everything ships enabled; the
@@ -20,6 +21,7 @@ export const PANEL_ORDER: string[] = [
 	"journal",
 	"meals",
 	"search",
+	"calendar",
 	"secondbrain",
 	"places",
 ];
@@ -32,6 +34,7 @@ export const PANEL_TITLES: Record<string, string> = {
 	journal: "Journal",
 	meals: "Meals",
 	search: "Search",
+	calendar: "Calendar",
 	secondbrain: "Second Brain",
 	places: "Places",
 };
@@ -46,6 +49,7 @@ const FACTORIES: Record<string, PanelFactory> = {
 	journal: () => new JournalPanel(),
 	meals: () => new MealsPanel(),
 	search: () => new SearchPanel(),
+	calendar: () => new CalendarPanel(),
 	secondbrain: () => new SecondBrainPanel(),
 	places: () => new PlacesPanel(),
 };

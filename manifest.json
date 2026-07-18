@@ -1,7 +1,7 @@
 {
 	"id": "daily-dash",
 	"name": "Daily Dashboard",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"minAppVersion": "1.4.0",
 	"description": "A warm, simple home dashboard for your vault — a clock, a daily verse, today's agenda, persistent to-dos, a journal, meals, and quick search. Works on desktop and mobile.",
 	"author": "SilentNinja06",

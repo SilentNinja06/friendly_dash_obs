@@ -76,7 +76,7 @@ Every day gets its own note, and they all start from the same simple layout.
 3. Open it and paste in exactly this:
 
 ```
-# Today
+# Brain dump
 
 # Completed tasks
 
@@ -84,7 +84,7 @@ Every day gets its own note, and they all start from the same simple layout.
 
 # Journal
 
-# Notes
+# Reference tomorrow
 ```
 
 > **Important:** don't add a colon (`:`) after any of these headings. Some

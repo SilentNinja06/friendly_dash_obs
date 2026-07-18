@@ -11,6 +11,10 @@ export interface DashRuntime {
 	/** While `Date.now() < typingUntil`, the user is typing in a free-text field;
 	 * the vault-refresh bus is deferred so the layout doesn't jump under them. */
 	typingUntil: number;
+	/** True while a free-text field anywhere on the dashboard has focus. The
+	 * refresh bus is fully suspended while this holds, so the page never
+	 * re-renders (and jumps) under the cursor — it resumes on blur. */
+	textFocused: boolean;
 }
 
 export interface PanelContext {
@@ -91,6 +95,17 @@ export abstract class BasePanel implements Panel {
 	protected setInterval(fn: () => void, ms: number): void {
 		const id = window.setInterval(fn, ms);
 		this.onCleanup(() => window.clearInterval(id));
+	}
+
+	/** Wire a text input/textarea so the whole dashboard stops refreshing while
+	 * it is focused (no jumpy re-render under the cursor), resuming on blur. */
+	protected bindTextFocus(el: HTMLElement): void {
+		el.addEventListener("focus", () => {
+			this.ctx.runtime.textFocused = true;
+		});
+		el.addEventListener("blur", () => {
+			this.ctx.runtime.textFocused = false;
+		});
 	}
 }
 

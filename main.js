@@ -27,10 +27,10 @@ __export(main_exports, {
   default: () => DailyDashPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian15 = require("obsidian");
+var import_obsidian19 = require("obsidian");
 
 // src/settings.ts
-var import_obsidian10 = require("obsidian");
+var import_obsidian14 = require("obsidian");
 
 // src/panels/clock.ts
 var import_obsidian = require("obsidian");
@@ -76,6 +76,16 @@ var BasePanel = class {
   setInterval(fn, ms) {
     const id = window.setInterval(fn, ms);
     this.onCleanup(() => window.clearInterval(id));
+  }
+  /** Wire a text input/textarea so the whole dashboard stops refreshing while
+   * it is focused (no jumpy re-render under the cursor), resuming on blur. */
+  bindTextFocus(el) {
+    el.addEventListener("focus", () => {
+      this.ctx.runtime.textFocused = true;
+    });
+    el.addEventListener("blur", () => {
+      this.ctx.runtime.textFocused = false;
+    });
   }
 };
 function placard(el, title) {
@@ -203,6 +213,11 @@ function getDailyNotesOptions(app) {
   const dn = (_b = (_a = app.internalPlugins) == null ? void 0 : _a.getPluginById) == null ? void 0 : _b.call(_a, "daily-notes");
   return (_d = (_c = dn == null ? void 0 : dn.instance) == null ? void 0 : _c.options) != null ? _d : {};
 }
+function dailyNotesFolder(app) {
+  var _a;
+  const opts = getDailyNotesOptions(app);
+  return ((_a = opts.folder) != null ? _a : "").trim().replace(/\/+$/, "");
+}
 function dailyNotePath(app, date) {
   var _a;
   const opts = getDailyNotesOptions(app);
@@ -247,7 +262,7 @@ async function renderDailyTemplate(app, opts, dailyPath, date) {
   const basename = (_c = (_b = dailyPath.split("/").pop()) == null ? void 0 : _b.replace(/\.md$/, "")) != null ? _c : "";
   const m = (0, import_obsidian2.moment)(date, "YYYY-MM-DD");
   const now = (0, import_obsidian2.moment)();
-  return raw.replace(/{{\s*title\s*}}/gi, basename).replace(/{{\s*date(?::([^}]+))?\s*}}/gi, (_, fmt) => m.format(fmt || "YYYY-MM-DD")).replace(/{{\s*time(?::([^}]+))?\s*}}/gi, (_, fmt) => now.format(fmt || "HH:mm"));
+  return raw.replace(/{{\s*title\s*}}/gi, basename).replace(/{{\s*date(?::([^}]+))?\s*}}/gi, (_, fmt2) => m.format(fmt2 || "YYYY-MM-DD")).replace(/{{\s*time(?::([^}]+))?\s*}}/gi, (_, fmt2) => now.format(fmt2 || "HH:mm"));
 }
 var HEADING_RE = /^#{1,6}\s/;
 function headingField(heading) {
@@ -1199,25 +1214,21 @@ var THEMES = [
   {
     id: "sleek",
     label: "Sleek Modern",
-    mode: "light",
     blurb: "Clean and near-monochrome, with a single deep-green accent. A calm, neutral place to start."
   },
   {
     id: "pastel",
     label: "Pastel / Floral",
-    mode: "light",
-    blurb: "Soft and warm \u2014 dusty rose, sage, and lavender on a cream page, with gentle rounded corners."
+    blurb: "Soft and warm \u2014 dusty rose, sage, and lavender, with gentle rounded corners."
   },
   {
     id: "mellow",
     label: "Mellow",
-    mode: "dark",
-    blurb: "A quiet dark dusk in muted violet, orange, and dusty blue. Easy on the eyes at night."
+    blurb: "A quiet mix of muted violet, orange, and dusty blue. Easy on the eyes."
   },
   {
     id: "geometric",
     label: "Geometric",
-    mode: "dark",
     blurb: "Bold and graphic \u2014 vermilion, ochre, and cobalt blocks with sharp edges and thick rules."
   }
 ];
@@ -1401,10 +1412,11 @@ function humanizeFetchError(e) {
 }
 
 // src/panels/journal.ts
+var import_obsidian7 = require("obsidian");
 var FIELDS = [
-  { key: "today", label: "Today", spec: headingField("Today") },
+  { key: "braindump", label: "Brain dump", spec: headingField("Brain dump") },
   { key: "journal", label: "Journal", spec: headingField("Journal") },
-  { key: "notes", label: "Notes", spec: headingField("Notes") }
+  { key: "reference", label: "Reference tomorrow", spec: headingField("Reference tomorrow") }
 ];
 var JournalPanel = class extends BasePanel {
   constructor() {
@@ -1423,10 +1435,26 @@ var JournalPanel = class extends BasePanel {
   }
   async renderBody() {
     placard(this.el, "Journal");
+    await this.renderYesterdayReference();
     const wrap = this.el.createDiv({ cls: "dash-journal" });
     for (const field of FIELDS) {
       await this.renderField(wrap, field);
     }
+  }
+  /** Read-only carry-over of yesterday's "Reference tomorrow" onto today. */
+  async renderYesterdayReference() {
+    const yesterday = (0, import_obsidian7.moment)().subtract(1, "day").format("YYYY-MM-DD");
+    let text = "";
+    try {
+      const raw = await readDailyNoteRaw(this.ctx.app, yesterday);
+      text = readField(raw, headingField("Reference tomorrow")).trim();
+    } catch (e) {
+      console.error("Daily Dashboard: could not read yesterday's reference note", e);
+    }
+    if (!text) return;
+    const block = this.el.createDiv({ cls: "dash-carry" });
+    block.createDiv({ cls: "dash-carry-label", text: "From yesterday \u2014 to reference today" });
+    block.createDiv({ cls: "dash-carry-body", text });
   }
   async renderField(parent, field) {
     const block = parent.createDiv({ cls: "dash-journal-field" });
@@ -1442,10 +1470,12 @@ var JournalPanel = class extends BasePanel {
     };
     ta.addEventListener("focus", () => {
       this.editing = true;
+      this.ctx.runtime.textFocused = true;
       this.ctx.runtime.typingUntil = Date.now() + 2e3;
     });
     ta.addEventListener("blur", () => {
       this.editing = false;
+      this.ctx.runtime.textFocused = false;
       this.ctx.runtime.typingUntil = 0;
       if (timer !== null) {
         window.clearTimeout(timer);
@@ -1473,7 +1503,7 @@ function autosize(ta) {
 }
 
 // src/panels/meals.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/panels/util.ts
 function commandButton(parent, bridge, fullId, label, opts = {}) {
@@ -1523,7 +1553,7 @@ var MealsPanel = class extends BasePanel {
         card.createDiv({ cls: "dash-meal-open", text: "Open recipe \u2192" });
         card.addEventListener("click", () => {
           const dest = this.ctx.app.metadataCache.getFirstLinkpathDest(meal.link, "");
-          if (dest instanceof import_obsidian7.TFile) void this.ctx.app.workspace.getLeaf(false).openFile(dest);
+          if (dest instanceof import_obsidian8.TFile) void this.ctx.app.workspace.getLeaf(false).openFile(dest);
         });
       }
     }
@@ -1555,7 +1585,169 @@ var MealsPanel = class extends BasePanel {
 };
 
 // src/panels/search.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian10 = require("obsidian");
+
+// src/panels/categorymodals.ts
+var import_obsidian9 = require("obsidian");
+var NewNoteModal = class extends import_obsidian9.Modal {
+  constructor(app, store, onDone) {
+    super(app);
+    this.store = store;
+    this.onDone = onDone;
+    this.title = "";
+    this.picked = "";
+    this.newCategory = "";
+  }
+  onOpen() {
+    this.titleEl.setText("New note");
+    const cats = this.store.listCategories().map((c) => c.name);
+    this.picked = "";
+    new import_obsidian9.Setting(this.contentEl).setName("Title").addText((t) => {
+      t.setPlaceholder("Note title").onChange((v) => this.title = v);
+      t.inputEl.focus();
+      t.inputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          void this.submit();
+        }
+      });
+    });
+    new import_obsidian9.Setting(this.contentEl).setName("Category").setDesc("Optional \u2014 file it under a category as you create it.").addDropdown((dd) => {
+      dd.addOption("", "(none)");
+      for (const c of cats) dd.addOption(c, c);
+      dd.setValue("").onChange((v) => this.picked = v);
+    });
+    new import_obsidian9.Setting(this.contentEl).setName("Or a new category").setDesc("Creates the category and files this note under it.").addText((t) => t.setPlaceholder("New category name").onChange((v) => this.newCategory = v));
+    new import_obsidian9.Setting(this.contentEl).addButton((b) => b.setButtonText("Cancel").onClick(() => this.close())).addButton((b) => b.setButtonText("Create").setCta().onClick(() => void this.submit()));
+  }
+  async submit() {
+    const title = this.title.trim();
+    if (!title) {
+      new import_obsidian9.Notice("Please give the note a title.");
+      return;
+    }
+    const category = this.newCategory.trim() || this.picked.trim();
+    const file = await this.store.createNote(title, category || void 0);
+    this.close();
+    this.onDone();
+    await this.app.workspace.getLeaf(false).openFile(file);
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+var NewCategoryModal = class extends import_obsidian9.Modal {
+  constructor(app, store, onDone) {
+    super(app);
+    this.store = store;
+    this.onDone = onDone;
+    this.name = "";
+  }
+  onOpen() {
+    this.titleEl.setText("New category");
+    new import_obsidian9.Setting(this.contentEl).setName("Name").addText((t) => {
+      t.setPlaceholder("Category name").onChange((v) => this.name = v);
+      t.inputEl.focus();
+      t.inputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          void this.submit();
+        }
+      });
+    });
+    new import_obsidian9.Setting(this.contentEl).addButton((b) => b.setButtonText("Cancel").onClick(() => this.close())).addButton((b) => b.setButtonText("Create").setCta().onClick(() => void this.submit()));
+  }
+  async submit() {
+    const name = this.name.trim();
+    if (!name) {
+      new import_obsidian9.Notice("Please give the category a name.");
+      return;
+    }
+    await this.store.createCategory(name);
+    this.close();
+    this.onDone();
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+function runAssignFlow(app, store, onDone) {
+  const notes = store.listNotes();
+  if (notes.length === 0) {
+    new import_obsidian9.Notice("There are no notes to file yet. Make one first.");
+    return;
+  }
+  new NoteSuggestModal(app, notes, (note) => {
+    const cats = store.listCategories().map((c) => c.name);
+    new CategoryPromptModal(app, cats, async (category) => {
+      await store.assign(note, category);
+      new import_obsidian9.Notice(`Filed \u201C${note.basename}\u201D under \u201C${category}\u201D.`);
+      onDone();
+    }).open();
+  }).open();
+}
+var NoteSuggestModal = class extends import_obsidian9.FuzzySuggestModal {
+  constructor(app, notes, onChoose) {
+    super(app);
+    this.notes = notes;
+    this.onChoose = onChoose;
+    this.setPlaceholder("Pick a note to file\u2026");
+  }
+  getItems() {
+    return this.notes;
+  }
+  getItemText(file) {
+    return file.basename;
+  }
+  onChooseItem(file) {
+    this.onChoose(file);
+  }
+};
+var CategoryPromptModal = class extends import_obsidian9.Modal {
+  constructor(app, categories, onChoose) {
+    super(app);
+    this.categories = categories;
+    this.onChoose = onChoose;
+    this.picked = "";
+    this.newName = "";
+  }
+  onOpen() {
+    var _a;
+    this.titleEl.setText("File under a category");
+    this.picked = (_a = this.categories[0]) != null ? _a : "";
+    if (this.categories.length > 0) {
+      new import_obsidian9.Setting(this.contentEl).setName("Existing category").addDropdown((dd) => {
+        for (const c of this.categories) dd.addOption(c, c);
+        dd.setValue(this.picked).onChange((v) => this.picked = v);
+      });
+    }
+    new import_obsidian9.Setting(this.contentEl).setName("Or a new category").setDesc("Leave blank to use the one above.").addText((t) => {
+      t.setPlaceholder("New category name").onChange((v) => this.newName = v);
+      if (this.categories.length === 0) t.inputEl.focus();
+      t.inputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          this.submit();
+        }
+      });
+    });
+    new import_obsidian9.Setting(this.contentEl).addButton((b) => b.setButtonText("Cancel").onClick(() => this.close())).addButton((b) => b.setButtonText("File it").setCta().onClick(() => this.submit()));
+  }
+  submit() {
+    const category = this.newName.trim() || this.picked.trim();
+    if (!category) {
+      new import_obsidian9.Notice("Pick or name a category.");
+      return;
+    }
+    this.close();
+    this.onChoose(category);
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+
+// src/panels/search.ts
 var SearchPanel = class extends BasePanel {
   constructor() {
     super(...arguments);
@@ -1582,22 +1774,65 @@ var SearchPanel = class extends BasePanel {
   renderBody() {
     this.buildIndex();
     placard(this.el, "Search");
+    const store = this.ctx.plugin.knowledgeBase;
+    const actions = this.el.createDiv({ cls: "dash-btn-row" });
+    const note = actions.createEl("button", { cls: "dash-btn dash-btn-primary", text: "+ Note" });
+    note.addEventListener("click", () => new NewNoteModal(this.ctx.app, store, () => this.rerender()).open());
+    const cat = actions.createEl("button", { cls: "dash-btn", text: "+ Category" });
+    cat.addEventListener("click", () => new NewCategoryModal(this.ctx.app, store, () => this.rerender()).open());
+    const assign2 = actions.createEl("button", { cls: "dash-btn", text: "File under category" });
+    assign2.addEventListener("click", () => runAssignFlow(this.ctx.app, store, () => this.rerender()));
     const input = this.el.createEl("input", {
       cls: "dash-search-input",
       attr: { type: "search", placeholder: "Search your notes\u2026", enterkeyhint: "search" }
     });
     this.inputEl = input;
+    this.bindTextFocus(input);
     this.resultsEl = this.el.createDiv({ cls: "dash-search-results" });
     input.addEventListener("input", () => this.runQuery(input.value));
     input.addEventListener("keydown", (e) => this.onKey(e));
     this.runQuery("");
+    this.renderCategories();
+  }
+  renderCategories() {
+    const store = this.ctx.plugin.knowledgeBase;
+    const cats = store.listCategories();
+    const section = this.el.createDiv({ cls: "dash-sb-cats" });
+    section.createDiv({ cls: "dash-subhead", text: `Categories \xB7 ${cats.length}` });
+    if (cats.length === 0) {
+      section.createDiv({ cls: "dash-muted", text: "No categories yet. Make one to start grouping your notes." });
+      return;
+    }
+    const listEl = section.createDiv();
+    void (async () => {
+      const withMembers = await Promise.all(
+        cats.map(async (c) => ({ cat: c, members: await store.categoryMembers(c.file) }))
+      );
+      if (!listEl.isConnected) return;
+      for (const { cat, members } of withMembers) {
+        const details = listEl.createEl("details", { cls: "dash-sb-cat" });
+        const summary = details.createEl("summary");
+        summary.createSpan({ cls: "dash-sb-cat-name", text: cat.name });
+        summary.createSpan({ cls: "dash-chip dash-chip-cold", text: String(members.length) });
+        const body = details.createDiv({ cls: "dash-sb-cat-body" });
+        if (members.length === 0) body.createDiv({ cls: "dash-muted", text: "Empty." });
+        for (const m of members) {
+          const row = body.createDiv({ cls: "dash-sb-member" });
+          const link = row.createEl("a", { cls: "dash-sb-link", text: m });
+          link.addEventListener("click", (e) => {
+            e.preventDefault();
+            void this.ctx.app.workspace.openLinkText(m, cat.file.path, false);
+          });
+        }
+      }
+    })();
   }
   runQuery(query) {
     const q = query.trim();
     this.hits = [];
     this.selected = 0;
     if (q) {
-      const search = (0, import_obsidian8.prepareFuzzySearch)(q);
+      const search = (0, import_obsidian10.prepareFuzzySearch)(q);
       for (const cand of this.index) {
         let best = search(cand.basename);
         let context = "";
@@ -1662,7 +1897,7 @@ function inFolder(path, folder) {
 }
 
 // src/panels/secondbrain.ts
-var import_obsidian9 = require("obsidian");
+var import_obsidian11 = require("obsidian");
 var SecondBrainPanel = class extends BasePanel {
   constructor() {
     super(...arguments);
@@ -1680,12 +1915,13 @@ var SecondBrainPanel = class extends BasePanel {
     head.createSpan({ cls: "dash-placard-badge", text: `${notes.length} active` });
     const actions = this.el.createDiv({ cls: "dash-btn-row" });
     const add = actions.createEl("button", { cls: "dash-btn dash-btn-primary", text: "+ New project" });
-    add.addEventListener("click", () => new NewNoteModal(this.ctx.app, this.store, () => this.rerender()).open());
+    add.addEventListener("click", () => new NewNoteModal2(this.ctx.app, this.store, () => this.rerender()).open());
     const input = this.el.createEl("input", {
       cls: "dash-search-input",
       attr: { type: "search", placeholder: "Search your projects\u2026" }
     });
     input.value = this.query;
+    this.bindTextFocus(input);
     const results = this.el.createDiv({ cls: "dash-sb-results" });
     const render = () => {
       results.empty();
@@ -1724,7 +1960,7 @@ var SecondBrainPanel = class extends BasePanel {
         });
         this.iconBtn(row, "\u293A", "Move back to active", async () => {
           await this.store.restoreNote(file);
-          new import_obsidian9.Notice(`Moved \u201C${file.basename}\u201D back to active projects.`);
+          new import_obsidian11.Notice(`Moved \u201C${file.basename}\u201D back to active projects.`);
           this.rerender();
         });
       }
@@ -1745,7 +1981,7 @@ var SecondBrainPanel = class extends BasePanel {
         "Archive",
         async () => {
           await this.store.archiveNote(file);
-          new import_obsidian9.Notice(`Archived \u201C${file.basename}\u201D.`);
+          new import_obsidian11.Notice(`Archived \u201C${file.basename}\u201D.`);
           this.showArchived = true;
           this.rerender();
         }
@@ -1759,7 +1995,7 @@ var SecondBrainPanel = class extends BasePanel {
         "Delete",
         async () => {
           await this.store.deleteNote(file);
-          new import_obsidian9.Notice(`Deleted \u201C${file.basename}\u201D.`);
+          new import_obsidian11.Notice(`Deleted \u201C${file.basename}\u201D.`);
           this.rerender();
         }
       ).open();
@@ -1771,7 +2007,7 @@ var SecondBrainPanel = class extends BasePanel {
   }
   fuzzy(files, query) {
     var _a;
-    const search = (0, import_obsidian9.prepareFuzzySearch)(query);
+    const search = (0, import_obsidian11.prepareFuzzySearch)(query);
     const scored = [];
     for (const file of files) {
       let best = search(file.basename);
@@ -1785,7 +2021,7 @@ var SecondBrainPanel = class extends BasePanel {
     return scored.sort((a, b) => b.score - a.score).slice(0, 20).map((s) => s.file);
   }
 };
-var NewNoteModal = class extends import_obsidian9.Modal {
+var NewNoteModal2 = class extends import_obsidian11.Modal {
   constructor(app, store, onDone) {
     super(app);
     this.store = store;
@@ -1794,7 +2030,7 @@ var NewNoteModal = class extends import_obsidian9.Modal {
   }
   onOpen() {
     this.titleEl.setText("New project");
-    new import_obsidian9.Setting(this.contentEl).setName("Project name").addText((t) => {
+    new import_obsidian11.Setting(this.contentEl).setName("Project name").addText((t) => {
       t.setPlaceholder("What is this project called?").onChange((v) => this.title = v);
       t.inputEl.focus();
       t.inputEl.addEventListener("keydown", (e) => {
@@ -1804,12 +2040,12 @@ var NewNoteModal = class extends import_obsidian9.Modal {
         }
       });
     });
-    new import_obsidian9.Setting(this.contentEl).addButton((b) => b.setButtonText("Cancel").onClick(() => this.close())).addButton((b) => b.setButtonText("Create").setCta().onClick(() => void this.submit()));
+    new import_obsidian11.Setting(this.contentEl).addButton((b) => b.setButtonText("Cancel").onClick(() => this.close())).addButton((b) => b.setButtonText("Create").setCta().onClick(() => void this.submit()));
   }
   async submit() {
     const title = this.title.trim();
     if (!title) {
-      new import_obsidian9.Notice("Please give the project a name.");
+      new import_obsidian11.Notice("Please give the project a name.");
       return;
     }
     const file = await this.store.createNote(title);
@@ -1821,7 +2057,7 @@ var NewNoteModal = class extends import_obsidian9.Modal {
     this.contentEl.empty();
   }
 };
-var ConfirmModal = class extends import_obsidian9.Modal {
+var ConfirmModal = class extends import_obsidian11.Modal {
   constructor(app, heading, body, confirmLabel, onConfirm) {
     super(app);
     this.heading = heading;
@@ -1832,7 +2068,7 @@ var ConfirmModal = class extends import_obsidian9.Modal {
   onOpen() {
     this.titleEl.setText(this.heading);
     this.contentEl.createEl("p", { text: this.body });
-    new import_obsidian9.Setting(this.contentEl).addButton((b) => b.setButtonText("Cancel").onClick(() => this.close())).addButton(
+    new import_obsidian11.Setting(this.contentEl).addButton((b) => b.setButtonText("Cancel").onClick(() => this.close())).addButton(
       (b) => b.setButtonText(this.confirmLabel).setWarning().onClick(() => {
         this.close();
         this.onConfirm();
@@ -1843,6 +2079,217 @@ var ConfirmModal = class extends import_obsidian9.Modal {
     this.contentEl.empty();
   }
 };
+
+// src/panels/calendar.ts
+var import_obsidian13 = require("obsidian");
+
+// src/core/dailynotes.ts
+var import_obsidian12 = require("obsidian");
+var DATE_LIKE = /^\d{4}-\d{2}-\d{2}/;
+function inFolder2(path, folder) {
+  return path === folder || path.startsWith(folder + "/");
+}
+function listDailyNoteFiles(app) {
+  const folder = dailyNotesFolder(app);
+  return app.vault.getMarkdownFiles().filter((f) => {
+    if (folder) return inFolder2(f.path, folder);
+    return DATE_LIKE.test(f.basename);
+  });
+}
+async function searchDailyNoteBodies(app, query, limit = 30) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const files = listDailyNoteFiles(app).sort((a, b) => b.stat.mtime - a.stat.mtime);
+  const out = [];
+  for (const file of files) {
+    let content;
+    try {
+      content = await app.vault.cachedRead(file);
+    } catch (e) {
+      continue;
+    }
+    const body = content.split("\n").filter((l) => !/^#{1,6}\s/.test(l)).join("\n");
+    const idx = body.toLowerCase().indexOf(q);
+    if (idx !== -1) {
+      out.push({ file, snippet: makeSnippet(body, idx, q.length) });
+      if (out.length >= limit) break;
+    }
+  }
+  return out;
+}
+function makeSnippet(body, idx, len) {
+  const pad = 48;
+  const start = Math.max(0, idx - pad);
+  const end = Math.min(body.length, idx + len + pad);
+  let s = body.slice(start, end).replace(/\s+/g, " ").trim();
+  if (start > 0) s = "\u2026 " + s;
+  if (end < body.length) s = s + " \u2026";
+  return s;
+}
+async function ensureDailyNotesBase(app, basePath) {
+  const path = (0, import_obsidian12.normalizePath)(basePath.endsWith(".base") ? basePath : basePath + ".base");
+  const existing = app.vault.getAbstractFileByPath(path);
+  if (existing instanceof import_obsidian12.TFile) return existing;
+  const dir = path.split("/").slice(0, -1).join("/");
+  if (dir && !app.vault.getAbstractFileByPath(dir)) {
+    await app.vault.createFolder(dir).catch(() => {
+    });
+  }
+  const folder = dailyNotesFolder(app);
+  return app.vault.create(path, baseContent(folder));
+}
+function baseContent(folder) {
+  const filter = folder ? `    - file.inFolder("${folder}")` : `    - file.ext == "md"`;
+  return [
+    "filters:",
+    "  and:",
+    filter,
+    "views:",
+    "  - type: table",
+    "    name: Daily notes",
+    "    order:",
+    "      - file.name",
+    "      - file.mtime",
+    ""
+  ].join("\n");
+}
+
+// src/panels/calendar.ts
+var WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+var CalendarPanel = class extends BasePanel {
+  constructor() {
+    super(...arguments);
+    this.id = "calendar";
+    this.title = "Calendar";
+    /** First day of the month being viewed. */
+    this.cursor = startOfMonth(/* @__PURE__ */ new Date());
+    this.searchQuery = "";
+    this.searchTimer = null;
+  }
+  renderBody() {
+    placard(this.el, "Calendar");
+    this.renderMonthNav();
+    this.renderGrid();
+    this.renderBaseButton();
+    this.renderSearch();
+  }
+  // ------------------------------------------------------------- month grid
+  renderMonthNav() {
+    const nav = this.el.createDiv({ cls: "dash-cal-nav" });
+    const prev = nav.createEl("button", { cls: "dash-icon-btn", text: "\u2039", attr: { "aria-label": "Previous month" } });
+    prev.addEventListener("click", () => {
+      this.cursor = addMonths(this.cursor, -1);
+      this.rerender();
+    });
+    const label = nav.createSpan({ cls: "dash-cal-month", text: (0, import_obsidian13.moment)(this.cursor).format("MMMM YYYY") });
+    label.addEventListener("click", () => {
+      this.cursor = startOfMonth(/* @__PURE__ */ new Date());
+      this.rerender();
+    });
+    const next = nav.createEl("button", { cls: "dash-icon-btn", text: "\u203A", attr: { "aria-label": "Next month" } });
+    next.addEventListener("click", () => {
+      this.cursor = addMonths(this.cursor, 1);
+      this.rerender();
+    });
+  }
+  renderGrid() {
+    const grid = this.el.createDiv({ cls: "dash-cal-grid" });
+    for (const w of WEEKDAY_LABELS) grid.createDiv({ cls: "dash-cal-dow", text: w });
+    const year = this.cursor.getFullYear();
+    const month = this.cursor.getMonth();
+    const first = new Date(year, month, 1);
+    const leading = first.getDay();
+    const start = new Date(year, month, 1 - leading);
+    const todayStr2 = (0, import_obsidian13.moment)().format("YYYY-MM-DD");
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+      const dateStr = fmt(d);
+      const cell = grid.createEl("button", { cls: "dash-cal-day", text: String(d.getDate()) });
+      if (d.getMonth() !== month) cell.addClass("is-outside");
+      if (dateStr === todayStr2) cell.addClass("is-today");
+      if (getDailyNoteFile(this.ctx.app, dateStr)) cell.addClass("has-note");
+      cell.setAttr("aria-label", (0, import_obsidian13.moment)(d).format("dddd, MMMM D, YYYY"));
+      cell.addEventListener("click", () => void this.openDay(dateStr));
+    }
+  }
+  async openDay(dateStr) {
+    try {
+      const file = await ensureDailyNote(this.ctx.app, dateStr);
+      await this.ctx.app.workspace.getLeaf(false).openFile(file);
+    } catch (e) {
+      console.error("Daily Dashboard: could not open the daily note", e);
+      new import_obsidian13.Notice("Couldn't open that day's note.");
+    }
+  }
+  // -------------------------------------------------------------- base button
+  renderBaseButton() {
+    const row = this.el.createDiv({ cls: "dash-btn-row" });
+    const btn = row.createEl("button", { cls: "dash-btn", text: "Open all-days table" });
+    btn.addEventListener("click", async () => {
+      try {
+        const path = this.ctx.settings().calendarBasePath;
+        const file = await ensureDailyNotesBase(this.ctx.app, path);
+        await this.ctx.app.workspace.getLeaf(false).openFile(file);
+      } catch (e) {
+        console.error("Daily Dashboard: could not open the daily-notes base", e);
+        new import_obsidian13.Notice("Couldn't open the daily-notes table. Check the base file path in settings.");
+      }
+    });
+  }
+  // ------------------------------------------------------------------ search
+  renderSearch() {
+    this.el.createDiv({ cls: "dash-subhead", text: "Search all daily notes" });
+    const input = this.el.createEl("input", {
+      cls: "dash-search-input",
+      attr: { type: "search", placeholder: "Find words inside your daily notes\u2026", enterkeyhint: "search" }
+    });
+    input.value = this.searchQuery;
+    this.bindTextFocus(input);
+    this.searchResultsEl = this.el.createDiv({ cls: "dash-search-results" });
+    input.addEventListener("input", () => {
+      this.searchQuery = input.value;
+      if (this.searchTimer !== null) window.clearTimeout(this.searchTimer);
+      this.searchTimer = window.setTimeout(() => void this.runSearch(), 250);
+    });
+    this.onCleanup(() => {
+      if (this.searchTimer !== null) window.clearTimeout(this.searchTimer);
+    });
+    if (this.searchQuery.trim()) void this.runSearch();
+  }
+  async runSearch() {
+    const el = this.searchResultsEl;
+    if (!el) return;
+    const q = this.searchQuery.trim();
+    el.empty();
+    if (!q) return;
+    const hits = await searchDailyNoteBodies(this.ctx.app, q);
+    if (!el.isConnected) return;
+    if (hits.length === 0) {
+      el.createDiv({ cls: "dash-muted", text: "Nothing found in your daily notes." });
+      return;
+    }
+    for (const hit of hits) this.renderHit(el, hit);
+  }
+  renderHit(el, hit) {
+    const row = el.createDiv({ cls: "dash-search-row" });
+    row.createDiv({ cls: "dash-search-title", text: hit.file.basename });
+    row.createDiv({ cls: "dash-search-context", text: hit.snippet });
+    row.addEventListener("click", () => this.open(hit.file));
+  }
+  open(file) {
+    void this.ctx.app.workspace.getLeaf(false).openFile(file);
+  }
+};
+function startOfMonth(d) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+function addMonths(d, delta) {
+  return new Date(d.getFullYear(), d.getMonth() + delta, 1);
+}
+function fmt(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 
 // src/panels/places.ts
 var PlacesPanel = class extends BasePanel {
@@ -1881,6 +2328,7 @@ var PANEL_ORDER = [
   "journal",
   "meals",
   "search",
+  "calendar",
   "secondbrain",
   "places"
 ];
@@ -1892,6 +2340,7 @@ var PANEL_TITLES = {
   journal: "Journal",
   meals: "Meals",
   search: "Search",
+  calendar: "Calendar",
   secondbrain: "Second Brain",
   places: "Places"
 };
@@ -1903,6 +2352,7 @@ var FACTORIES = {
   journal: () => new JournalPanel(),
   meals: () => new MealsPanel(),
   search: () => new SearchPanel(),
+  calendar: () => new CalendarPanel(),
   secondbrain: () => new SecondBrainPanel(),
   places: () => new PlacesPanel()
 };
@@ -1931,8 +2381,14 @@ var DEFAULT_SETTINGS = {
   agendaHeight: 320,
   agendaUrls: [],
   kbSearchPaths: ["Knowledge base/Notes", "Second brain"],
+  kbRootPath: "Knowledge base",
+  kbNotesSubfolder: "Notes",
+  kbCategoriesSubfolder: "Categories",
+  kbArchiveSubfolder: "Archive",
+  kbListHeading: "Notes",
   secondBrainPath: "Second brain",
   secondBrainArchiveSubfolder: "Archive",
+  calendarBasePath: "Logs/Daily notes.base",
   places: [
     { label: "Knowledge base", target: "Knowledge base", type: "note" },
     { label: "Second brain", target: "Second brain", type: "note" },
@@ -1962,7 +2418,7 @@ function mergeSettings(loaded) {
   s.places = ((_e = loaded == null ? void 0 : loaded.places) != null ? _e : DEFAULT_SETTINGS.places).map(normalizePlace);
   return s;
 }
-var DashSettingTab = class extends import_obsidian10.PluginSettingTab {
+var DashSettingTab = class extends import_obsidian14.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -1980,9 +2436,9 @@ var DashSettingTab = class extends import_obsidian10.PluginSettingTab {
     const { containerEl } = this;
     const s = this.plugin.settings;
     containerEl.empty();
-    new import_obsidian10.Setting(containerEl).setName("Appearance").setHeading();
-    new import_obsidian10.Setting(containerEl).setName("Theme").setDesc(this.themeBlurb(s.theme)).addDropdown((dd) => {
-      for (const t of THEMES) dd.addOption(t.id, `${t.label} (${t.mode})`);
+    new import_obsidian14.Setting(containerEl).setName("Appearance").setHeading();
+    new import_obsidian14.Setting(containerEl).setName("Theme").setDesc(`${this.themeBlurb(s.theme)} Each theme follows your Obsidian light/dark setting automatically.`).addDropdown((dd) => {
+      for (const t of THEMES) dd.addOption(t.id, t.label);
       dd.setValue(s.theme).onChange(async (v) => {
         s.theme = isThemeId(v) ? v : DEFAULT_THEME;
         await this.plugin.saveData_();
@@ -1990,32 +2446,32 @@ var DashSettingTab = class extends import_obsidian10.PluginSettingTab {
         this.display();
       });
     });
-    new import_obsidian10.Setting(containerEl).setName("Open on startup").setDesc("Open the dashboard automatically when Obsidian starts.").addToggle(
+    new import_obsidian14.Setting(containerEl).setName("Open on startup").setDesc("Open the dashboard automatically when Obsidian starts.").addToggle(
       (t) => t.setValue(s.openOnStartup).onChange(async (v) => {
         s.openOnStartup = v;
         await this.save();
       })
     );
-    new import_obsidian10.Setting(containerEl).setName("Use as the New Tab page").setDesc("Turn every empty New Tab into the dashboard, so it becomes your landing view.").addToggle(
+    new import_obsidian14.Setting(containerEl).setName("Use as the New Tab page").setDesc("Turn every empty New Tab into the dashboard, so it becomes your landing view.").addToggle(
       (t) => t.setValue(s.replaceNewTab).onChange(async (v) => {
         s.replaceNewTab = v;
         await this.save();
         if (v) this.plugin.replaceActiveEmptyLeaf();
       })
     );
-    new import_obsidian10.Setting(containerEl).setName("24-hour clock").setDesc("Off shows the time as 2:32 PM. On shows it as 14:32.").addToggle(
+    new import_obsidian14.Setting(containerEl).setName("24-hour clock").setDesc("Off shows the time as 2:32 PM. On shows it as 14:32.").addToggle(
       (t) => t.setValue(s.clock24h).onChange(async (v) => {
         s.clock24h = v;
         await this.save();
       })
     );
-    new import_obsidian10.Setting(containerEl).setName("Panels").setDesc("Turn panels on or off, and reorder them. Everything is on by default; the layout stacks to one column on a phone and spreads to a grid on the desktop.").setHeading();
+    new import_obsidian14.Setting(containerEl).setName("Panels").setDesc("Turn panels on or off, and reorder them. Everything is on by default; the layout stacks to one column on a phone and spreads to a grid on the desktop.").setHeading();
     const list = containerEl.createDiv({ cls: "dash-settings-panel-list" });
     const renderList = () => {
       list.empty();
       s.panelOrder.forEach((id, index) => {
         var _a;
-        const row = new import_obsidian10.Setting(list).setName((_a = PANEL_TITLES[id]) != null ? _a : id);
+        const row = new import_obsidian14.Setting(list).setName((_a = PANEL_TITLES[id]) != null ? _a : id);
         row.addExtraButton(
           (b) => b.setIcon("arrow-up").setTooltip("Move up").setDisabled(index === 0).onClick(async () => {
             [s.panelOrder[index - 1], s.panelOrder[index]] = [s.panelOrder[index], s.panelOrder[index - 1]];
@@ -2039,8 +2495,8 @@ var DashSettingTab = class extends import_obsidian10.PluginSettingTab {
       });
     };
     renderList();
-    new import_obsidian10.Setting(containerEl).setName("Today's agenda").setHeading();
-    new import_obsidian10.Setting(containerEl).setName("Refresh interval (minutes)").setDesc("How often your calendars are re-fetched while the dashboard is open.").addText(
+    new import_obsidian14.Setting(containerEl).setName("Today's agenda").setHeading();
+    new import_obsidian14.Setting(containerEl).setName("Refresh interval (minutes)").setDesc("How often your calendars are re-fetched while the dashboard is open.").addText(
       (t) => t.setValue(String(s.agendaRefreshMinutes)).onChange(async (v) => {
         const n = Number(v);
         if (Number.isFinite(n) && n > 0) {
@@ -2049,7 +2505,7 @@ var DashSettingTab = class extends import_obsidian10.PluginSettingTab {
         }
       })
     );
-    new import_obsidian10.Setting(containerEl).setName("Agenda height (pixels)").setDesc("The agenda scrolls inside a fixed height so it never takes over the screen. This sets that height.").addText(
+    new import_obsidian14.Setting(containerEl).setName("Agenda height (pixels)").setDesc("The agenda scrolls inside a fixed height so it never takes over the screen. This sets that height.").addText(
       (t) => t.setValue(String(s.agendaHeight)).onChange(async (v) => {
         const n = Number(v);
         if (Number.isFinite(n) && n >= 120) {
@@ -2058,7 +2514,7 @@ var DashSettingTab = class extends import_obsidian10.PluginSettingTab {
         }
       })
     );
-    new import_obsidian10.Setting(containerEl).setName("Calendar share links").setDesc("Up to 20 calendars. One per line, as `Label | https://\u2026` (a public Proton Calendar / ICS share link). Today only \u2014 there is no month view.").addTextArea((t) => {
+    new import_obsidian14.Setting(containerEl).setName("Calendar share links").setDesc("Up to 20 calendars. One per line, as `Label | https://\u2026` (a public Proton Calendar / ICS share link). Today only \u2014 there is no month view.").addTextArea((t) => {
       t.setValue(s.agendaUrls.map((c) => `${c.label} | ${c.url}`).join("\n"));
       t.inputEl.rows = 8;
       t.onChange(async (v) => {
@@ -2070,8 +2526,8 @@ var DashSettingTab = class extends import_obsidian10.PluginSettingTab {
         await this.save();
       });
     });
-    new import_obsidian10.Setting(containerEl).setName("Search").setHeading();
-    new import_obsidian10.Setting(containerEl).setName("Folders to search").setDesc("The knowledge-base search looks only inside these folders. One folder per line.").addTextArea((t) => {
+    new import_obsidian14.Setting(containerEl).setName("Search").setHeading();
+    new import_obsidian14.Setting(containerEl).setName("Folders to search").setDesc("The knowledge-base search looks only inside these folders. One folder per line.").addTextArea((t) => {
       t.setValue(s.kbSearchPaths.join("\n"));
       t.inputEl.rows = 3;
       t.onChange(async (v) => {
@@ -2080,11 +2536,23 @@ var DashSettingTab = class extends import_obsidian10.PluginSettingTab {
         await this.save();
       });
     });
-    new import_obsidian10.Setting(containerEl).setName("Second brain").setHeading();
+    this.addText(containerEl, "Knowledge base folder", "The folder the Search card creates notes and categories in.", s.kbRootPath, (v) => s.kbRootPath = v || "Knowledge base");
+    this.addText(containerEl, "Notes subfolder", "Where new notes go, inside the knowledge-base folder.", s.kbNotesSubfolder, (v) => s.kbNotesSubfolder = v, true);
+    this.addText(containerEl, "Categories subfolder", "Where category notes go, inside the knowledge-base folder.", s.kbCategoriesSubfolder, (v) => s.kbCategoriesSubfolder = v || "Categories");
+    this.addText(containerEl, "Category list heading", "The heading in a category note under which its notes are listed.", s.kbListHeading, (v) => s.kbListHeading = v || "Notes");
+    new import_obsidian14.Setting(containerEl).setName("Calendar").setHeading();
+    this.addText(
+      containerEl,
+      "Daily-notes base file",
+      "The Bases (.base) file the Calendar card's button opens. It's created for you the first time you press the button if it doesn't exist yet.",
+      s.calendarBasePath,
+      (v) => s.calendarBasePath = v || "Logs/Daily notes.base"
+    );
+    new import_obsidian14.Setting(containerEl).setName("Second brain").setHeading();
     this.addText(containerEl, "Second brain folder", "The ongoing-project folder the Second brain panel manages.", s.secondBrainPath, (v) => s.secondBrainPath = v || "Second brain");
     this.addText(containerEl, "Archive subfolder", "Where a completed project is moved, inside the Second brain folder.", s.secondBrainArchiveSubfolder, (v) => s.secondBrainArchiveSubfolder = v || "Archive");
-    new import_obsidian10.Setting(containerEl).setName("Places / navigation").setHeading();
-    new import_obsidian10.Setting(containerEl).setName("Destinations").setDesc("One per line as `Label | target`. A target is a note or folder name (e.g. `Knowledge base`) or, prefixed with `cmd:`, a command id (e.g. `cmd:recipe-manager:recipe-index`).").addTextArea((t) => {
+    new import_obsidian14.Setting(containerEl).setName("Places / navigation").setHeading();
+    new import_obsidian14.Setting(containerEl).setName("Destinations").setDesc("One per line as `Label | target`. A target is a note or folder name (e.g. `Knowledge base`) or, prefixed with `cmd:`, a command id (e.g. `cmd:recipe-manager:recipe-index`).").addTextArea((t) => {
       t.setValue(
         s.places.map((p) => `${p.label} | ${p.type === "command" ? "cmd:" + p.target : p.target}`).join("\n")
       );
@@ -2101,7 +2569,7 @@ var DashSettingTab = class extends import_obsidian10.PluginSettingTab {
         await this.save();
       });
     });
-    new import_obsidian10.Setting(containerEl).setName("To-dos").setHeading();
+    new import_obsidian14.Setting(containerEl).setName("To-dos").setHeading();
     this.addText(
       containerEl,
       "To-do list file",
@@ -2117,7 +2585,7 @@ var DashSettingTab = class extends import_obsidian10.PluginSettingTab {
     return (_b = (_a = THEMES.find((t) => t.id === id)) == null ? void 0 : _a.blurb) != null ? _b : "";
   }
   addText(el, name, desc, value, set, allowEmpty = false) {
-    new import_obsidian10.Setting(el).setName(name).setDesc(desc).addText(
+    new import_obsidian14.Setting(el).setName(name).setDesc(desc).addText(
       (t) => t.setValue(value).onChange(async (v) => {
         const trimmed = v.trim();
         if (!trimmed && !allowEmpty) return;
@@ -2129,7 +2597,7 @@ var DashSettingTab = class extends import_obsidian10.PluginSettingTab {
 };
 
 // src/core/bridge.ts
-var import_obsidian11 = require("obsidian");
+var import_obsidian15 = require("obsidian");
 var RECIPES_ID = "recipe-manager";
 var Bridge = class {
   constructor(app) {
@@ -2208,7 +2676,7 @@ var Bridge = class {
   async groceryList() {
     const path = this.groceryListPath();
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian11.TFile)) return { path, items: [], exists: false };
+    if (!(file instanceof import_obsidian15.TFile)) return { path, items: [], exists: false };
     const content = await this.app.vault.cachedRead(file);
     const items = [];
     for (const line of content.split("\n")) {
@@ -2219,14 +2687,14 @@ var Bridge = class {
   }
 };
 function today() {
-  return (0, import_obsidian11.moment)().format("YYYY-MM-DD");
+  return (0, import_obsidian15.moment)().format("YYYY-MM-DD");
 }
 function stripFormatting(s) {
   return s.replace(/\*\*/g, "").replace(/\*(?!\*)/g, "").replace(/\s+\*\([^)]*\)\s*$/, "").trim();
 }
 
 // src/core/directivesstore.ts
-var import_obsidian12 = require("obsidian");
+var import_obsidian16 = require("obsidian");
 var DEFAULT_PATH = "Daily Dashboard/To-dos.md";
 var HEADER = "%% Daily Dashboard \u2014 your saved to-do list. This file is managed automatically; add and edit your to-dos in the dashboard, not here. %%";
 var DirectivesStore = class {
@@ -2248,15 +2716,15 @@ var DirectivesStore = class {
    * to `.md` so the file always syncs. */
   path() {
     const raw = (this.getPath() || DEFAULT_PATH).trim();
-    return (0, import_obsidian12.normalizePath)(raw.replace(/\.[^./]+$/, "") + ".md");
+    return (0, import_obsidian16.normalizePath)(raw.replace(/\.[^./]+$/, "") + ".md");
   }
   isDirectivesPath(path) {
-    return (0, import_obsidian12.normalizePath)(path) === this.path();
+    return (0, import_obsidian16.normalizePath)(path) === this.path();
   }
   /** Load from the Markdown file. Returns true if the file existed. */
   async load() {
     const file = this.app.vault.getAbstractFileByPath(this.path());
-    if (!(file instanceof import_obsidian12.TFile)) return false;
+    if (!(file instanceof import_obsidian16.TFile)) return false;
     try {
       const raw = await this.app.vault.read(file);
       this.lastSerialized = raw;
@@ -2274,7 +2742,7 @@ var DirectivesStore = class {
     this.lastSerialized = body;
     const path = this.path();
     const existing = this.app.vault.getAbstractFileByPath(path);
-    if (existing instanceof import_obsidian12.TFile) {
+    if (existing instanceof import_obsidian16.TFile) {
       await this.app.vault.modify(existing, body);
     } else {
       await this.ensureFolder(path);
@@ -2293,7 +2761,7 @@ var DirectivesStore = class {
   async ensureFolder(path) {
     const dir = path.split("/").slice(0, -1).join("/");
     if (!dir) return;
-    if (this.app.vault.getAbstractFileByPath(dir) instanceof import_obsidian12.TFolder) return;
+    if (this.app.vault.getAbstractFileByPath(dir) instanceof import_obsidian16.TFolder) return;
     await this.app.vault.createFolder(dir).catch(() => {
     });
   }
@@ -2319,26 +2787,26 @@ function parseTodos(raw) {
 }
 
 // src/core/library.ts
-var import_obsidian13 = require("obsidian");
+var import_obsidian17 = require("obsidian");
 var LibraryStore = class {
   constructor(app, cfg) {
     this.app = app;
     this.cfg = cfg;
   }
   root() {
-    return (0, import_obsidian13.normalizePath)((this.cfg().root || "Library").replace(/\/+$/, ""));
+    return (0, import_obsidian17.normalizePath)((this.cfg().root || "Library").replace(/\/+$/, ""));
   }
   /** Folder new/active notes live in. */
   notesFolder() {
     var _a;
     const sub = ((_a = this.cfg().notesSubfolder) != null ? _a : "").trim().replace(/\/+$/, "");
-    return sub ? (0, import_obsidian13.normalizePath)(this.root() + "/" + sub) : this.root();
+    return sub ? (0, import_obsidian17.normalizePath)(this.root() + "/" + sub) : this.root();
   }
   categoriesFolder() {
-    return (0, import_obsidian13.normalizePath)(this.root() + "/" + (this.cfg().categoriesSubfolder || "Categories"));
+    return (0, import_obsidian17.normalizePath)(this.root() + "/" + (this.cfg().categoriesSubfolder || "Categories"));
   }
   archiveFolder() {
-    return (0, import_obsidian13.normalizePath)(this.root() + "/" + (this.cfg().archiveSubfolder || "Archive"));
+    return (0, import_obsidian17.normalizePath)(this.root() + "/" + (this.cfg().archiveSubfolder || "Archive"));
   }
   heading() {
     return (this.cfg().listHeading || "Notes").trim();
@@ -2380,14 +2848,14 @@ var LibraryStore = class {
   }
   // ----------------------------------------------------------- mutations
   async ensureFolder(path) {
-    const norm = (0, import_obsidian13.normalizePath)(path);
+    const norm = (0, import_obsidian17.normalizePath)(path);
     if (!norm || norm === "/") return;
-    if (this.app.vault.getAbstractFileByPath(norm) instanceof import_obsidian13.TFolder) return;
+    if (this.app.vault.getAbstractFileByPath(norm) instanceof import_obsidian17.TFolder) return;
     const parts = norm.split("/");
     let cur = "";
     for (const p of parts) {
       cur = cur ? cur + "/" + p : p;
-      if (!(this.app.vault.getAbstractFileByPath(cur) instanceof import_obsidian13.TFolder)) {
+      if (!(this.app.vault.getAbstractFileByPath(cur) instanceof import_obsidian17.TFolder)) {
         await this.app.vault.createFolder(cur).catch(() => {
         });
       }
@@ -2399,20 +2867,20 @@ var LibraryStore = class {
   uniquePath(folder, base) {
     let name = base;
     for (let i = 1; i < 1e3; i++) {
-      const path = (0, import_obsidian13.normalizePath)(`${folder}/${name}.md`);
+      const path = (0, import_obsidian17.normalizePath)(`${folder}/${name}.md`);
       if (!this.app.vault.getAbstractFileByPath(path)) return path;
       name = `${base} ${i + 1}`;
     }
-    return (0, import_obsidian13.normalizePath)(`${folder}/${base} ${Date.now()}.md`);
+    return (0, import_obsidian17.normalizePath)(`${folder}/${base} ${Date.now()}.md`);
   }
   /** Create a category note (with the list heading) if it doesn't exist. */
   async createCategory(name) {
     const clean = this.sanitize(name);
     await this.ensureFolder(this.categoriesFolder());
     const existing = this.app.vault.getAbstractFileByPath(
-      (0, import_obsidian13.normalizePath)(`${this.categoriesFolder()}/${clean}.md`)
+      (0, import_obsidian17.normalizePath)(`${this.categoriesFolder()}/${clean}.md`)
     );
-    if (existing instanceof import_obsidian13.TFile) return existing;
+    if (existing instanceof import_obsidian17.TFile) return existing;
     const body = `---
 type: category
 ---
@@ -2424,14 +2892,14 @@ type: category
     const path = this.uniquePath(this.categoriesFolder(), clean);
     return this.app.vault.create(path, body);
   }
-  /** Create a note in the notes folder, optionally assigning a category. */
+  /** Create a note in the notes folder, optionally assigning a category. The
+   * note starts empty — the filename is the title; we don't inject a duplicate
+   * H1 heading. */
   async createNote(title, category) {
     const clean = this.sanitize(title);
     await this.ensureFolder(this.notesFolder());
     const path = this.uniquePath(this.notesFolder(), clean);
-    const file = await this.app.vault.create(path, `# ${clean}
-
-`);
+    const file = await this.app.vault.create(path, "");
     if (category) await this.assign(file, category);
     return file;
   }
@@ -2458,9 +2926,9 @@ type: category
   }
   async unassign(file, category) {
     const catFile = this.app.vault.getAbstractFileByPath(
-      (0, import_obsidian13.normalizePath)(`${this.categoriesFolder()}/${this.sanitize(category)}.md`)
+      (0, import_obsidian17.normalizePath)(`${this.categoriesFolder()}/${this.sanitize(category)}.md`)
     );
-    if (catFile instanceof import_obsidian13.TFile) await this.removeMember(catFile, file.basename);
+    if (catFile instanceof import_obsidian17.TFile) await this.removeMember(catFile, file.basename);
     await this.app.fileManager.processFrontMatter(file, (fm) => {
       if (Array.isArray(fm.categories)) {
         fm.categories = fm.categories.map(String).filter((c) => c !== category);
@@ -2476,7 +2944,7 @@ type: category
       await this.removeMember(cat.file, file.basename);
     }
     await this.ensureFolder(this.archiveFolder());
-    let dest = (0, import_obsidian13.normalizePath)(`${this.archiveFolder()}/${file.name}`);
+    let dest = (0, import_obsidian17.normalizePath)(`${this.archiveFolder()}/${file.name}`);
     if (this.app.vault.getAbstractFileByPath(dest)) {
       dest = this.uniquePath(this.archiveFolder(), file.basename);
     }
@@ -2487,7 +2955,7 @@ type: category
   }
   async restoreNote(file) {
     await this.ensureFolder(this.notesFolder());
-    let dest = (0, import_obsidian13.normalizePath)(`${this.notesFolder()}/${file.name}`);
+    let dest = (0, import_obsidian17.normalizePath)(`${this.notesFolder()}/${file.name}`);
     if (this.app.vault.getAbstractFileByPath(dest)) {
       dest = this.uniquePath(this.notesFolder(), file.basename);
     }
@@ -2554,9 +3022,9 @@ type: category
 };
 
 // src/view.ts
-var import_obsidian14 = require("obsidian");
+var import_obsidian18 = require("obsidian");
 var VIEW_TYPE_DASH = "daily-dashboard";
-var DashView = class extends import_obsidian14.ItemView {
+var DashView = class extends import_obsidian18.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
@@ -2631,7 +3099,7 @@ var DashView = class extends import_obsidian14.ItemView {
     brand.appendChild(dashMark());
     brand.createDiv({ cls: "dash-brand-name", text: "Daily Dashboard" });
     const refresh = header.createEl("button", { cls: "dash-icon-btn", attr: { "aria-label": "Refresh" } });
-    (0, import_obsidian14.setIcon)(refresh, "refresh-cw");
+    (0, import_obsidian18.setIcon)(refresh, "refresh-cw");
     refresh.addEventListener("click", () => void this.refreshPanels("manual"));
   }
   async mountPanel(panel, host, ctx) {
@@ -2701,11 +3169,11 @@ function dashMark() {
 }
 
 // src/main.ts
-var DailyDashPlugin = class extends import_obsidian15.Plugin {
+var DailyDashPlugin = class extends import_obsidian19.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
-    this.runtime = { typingUntil: 0 };
+    this.runtime = { typingUntil: 0, textFocused: false };
     this.refreshTimer = null;
   }
   async onload() {
@@ -2716,6 +3184,13 @@ var DailyDashPlugin = class extends import_obsidian15.Plugin {
       categoriesSubfolder: "Categories",
       archiveSubfolder: this.settings.secondBrainArchiveSubfolder,
       listHeading: "Notes"
+    }));
+    this.knowledgeBase = new LibraryStore(this.app, () => ({
+      root: this.settings.kbRootPath,
+      notesSubfolder: this.settings.kbNotesSubfolder,
+      categoriesSubfolder: this.settings.kbCategoriesSubfolder,
+      archiveSubfolder: this.settings.kbArchiveSubfolder,
+      listHeading: this.settings.kbListHeading
     }));
     this.directives = new DirectivesStore(this.app, () => this.settings.directivesPath);
     this.todos = new TodoStore(
@@ -2849,7 +3324,7 @@ var DailyDashPlugin = class extends import_obsidian15.Plugin {
     if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
     this.refreshTimer = window.setTimeout(() => {
       this.refreshTimer = null;
-      if (Date.now() < this.runtime.typingUntil) {
+      if (this.runtime.textFocused || Date.now() < this.runtime.typingUntil) {
         this.scheduleRefresh();
         return;
       }

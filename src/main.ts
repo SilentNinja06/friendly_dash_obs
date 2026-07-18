@@ -19,7 +19,8 @@ export default class DailyDashPlugin extends Plugin {
 	todos!: TodoStore;
 	directives!: DirectivesStore;
 	secondBrain!: LibraryStore;
-	runtime: DashRuntime = { typingUntil: 0 };
+	knowledgeBase!: LibraryStore;
+	runtime: DashRuntime = { typingUntil: 0, textFocused: false };
 
 	private data!: DashData;
 	private refreshTimer: number | null = null;
@@ -37,6 +38,13 @@ export default class DailyDashPlugin extends Plugin {
 			categoriesSubfolder: "Categories",
 			archiveSubfolder: this.settings.secondBrainArchiveSubfolder,
 			listHeading: "Notes",
+		}));
+		this.knowledgeBase = new LibraryStore(this.app, () => ({
+			root: this.settings.kbRootPath,
+			notesSubfolder: this.settings.kbNotesSubfolder,
+			categoriesSubfolder: this.settings.kbCategoriesSubfolder,
+			archiveSubfolder: this.settings.kbArchiveSubfolder,
+			listHeading: this.settings.kbListHeading,
 		}));
 		this.directives = new DirectivesStore(this.app, () => this.settings.directivesPath);
 		this.todos = new TodoStore(
@@ -189,9 +197,9 @@ export default class DailyDashPlugin extends Plugin {
 		if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
 		this.refreshTimer = window.setTimeout(() => {
 			this.refreshTimer = null;
-			// Don't re-render (and reflow the grid) while the user is typing in a
-			// free-text field — defer until a beat after they stop.
-			if (Date.now() < this.runtime.typingUntil) {
+			// Don't re-render (and reflow the grid) while the user is in a free-text
+			// field — defer while one is focused, or shortly after a keystroke.
+			if (this.runtime.textFocused || Date.now() < this.runtime.typingUntil) {
 				this.scheduleRefresh();
 				return;
 			}

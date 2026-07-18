@@ -1,4 +1,4 @@
-# Today
+# Brain dump
 
 # Completed tasks
 
@@ -6,4 +6,4 @@
 
 # Journal
 
-# Notes
+# Reference tomorrow

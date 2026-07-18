@@ -30,6 +30,13 @@ function getDailyNotesOptions(app: App): DailyNotesOptions {
 	return dn?.instance?.options ?? {};
 }
 
+/** The folder the core Daily Notes plugin writes into (trimmed, no trailing
+ * slash; "" if none set). Read from the plugin's own options, never hardcoded. */
+export function dailyNotesFolder(app: App): string {
+	const opts = getDailyNotesOptions(app);
+	return (opts.folder ?? "").trim().replace(/\/+$/, "");
+}
+
 /** Resolve the vault path of the daily note for `date` (default today). */
 export function dailyNotePath(app: App, date?: string): string {
 	const opts = getDailyNotesOptions(app);

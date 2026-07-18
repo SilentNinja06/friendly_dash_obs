@@ -34,9 +34,19 @@ export interface DashSettings {
 	agendaUrls: CalendarLink[];
 	/** Folders the knowledge-base search is scoped to (two roots by default). */
 	kbSearchPaths: string[];
+	/** Knowledge Base library — root + subfolders + category list heading, for
+	 * the note/category management on the Search card. */
+	kbRootPath: string;
+	kbNotesSubfolder: string;
+	kbCategoriesSubfolder: string;
+	kbArchiveSubfolder: string;
+	kbListHeading: string;
 	/** Second Brain (ongoing-project) folder + archive subfolder. */
 	secondBrainPath: string;
 	secondBrainArchiveSubfolder: string;
+	/** Vault path of the Bases file the Calendar card's button opens (created on
+	 * demand if missing). */
+	calendarBasePath: string;
 	places: PlaceLink[];
 	/** Vault file the persistent to-do list lives in (Markdown, so it syncs). */
 	directivesPath: string;
@@ -65,8 +75,14 @@ export const DEFAULT_SETTINGS: DashSettings = {
 	agendaHeight: 320,
 	agendaUrls: [],
 	kbSearchPaths: ["Knowledge base/Notes", "Second brain"],
+	kbRootPath: "Knowledge base",
+	kbNotesSubfolder: "Notes",
+	kbCategoriesSubfolder: "Categories",
+	kbArchiveSubfolder: "Archive",
+	kbListHeading: "Notes",
 	secondBrainPath: "Second brain",
 	secondBrainArchiveSubfolder: "Archive",
+	calendarBasePath: "Logs/Daily notes.base",
 	places: [
 		{ label: "Knowledge base", target: "Knowledge base", type: "note" },
 		{ label: "Second brain", target: "Second brain", type: "note" },
@@ -127,9 +143,9 @@ export class DashSettingTab extends PluginSettingTab {
 		new Setting(containerEl).setName("Appearance").setHeading();
 		new Setting(containerEl)
 			.setName("Theme")
-			.setDesc(this.themeBlurb(s.theme))
+			.setDesc(`${this.themeBlurb(s.theme)} Each theme follows your Obsidian light/dark setting automatically.`)
 			.addDropdown((dd) => {
-				for (const t of THEMES) dd.addOption(t.id, `${t.label} (${t.mode})`);
+				for (const t of THEMES) dd.addOption(t.id, t.label);
 				dd.setValue(s.theme).onChange(async (v) => {
 					s.theme = isThemeId(v) ? v : DEFAULT_THEME;
 					await this.plugin.saveData_();
@@ -273,6 +289,20 @@ export class DashSettingTab extends PluginSettingTab {
 					await this.save();
 				});
 			});
+		this.addText(containerEl, "Knowledge base folder", "The folder the Search card creates notes and categories in.", s.kbRootPath, (v) => (s.kbRootPath = v || "Knowledge base"));
+		this.addText(containerEl, "Notes subfolder", "Where new notes go, inside the knowledge-base folder.", s.kbNotesSubfolder, (v) => (s.kbNotesSubfolder = v), true);
+		this.addText(containerEl, "Categories subfolder", "Where category notes go, inside the knowledge-base folder.", s.kbCategoriesSubfolder, (v) => (s.kbCategoriesSubfolder = v || "Categories"));
+		this.addText(containerEl, "Category list heading", "The heading in a category note under which its notes are listed.", s.kbListHeading, (v) => (s.kbListHeading = v || "Notes"));
+
+		// -------- calendar --------
+		new Setting(containerEl).setName("Calendar").setHeading();
+		this.addText(
+			containerEl,
+			"Daily-notes base file",
+			"The Bases (.base) file the Calendar card's button opens. It's created for you the first time you press the button if it doesn't exist yet.",
+			s.calendarBasePath,
+			(v) => (s.calendarBasePath = v || "Logs/Daily notes.base")
+		);
 
 		// -------- second brain --------
 		new Setting(containerEl).setName("Second brain").setHeading();

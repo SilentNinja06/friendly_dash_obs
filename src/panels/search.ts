@@ -1,11 +1,17 @@
 import { TFile, prepareFuzzySearch } from "obsidian";
 import { BasePanel, placard } from "./types";
+import { NewCategoryModal, NewNoteModal, runAssignFlow } from "./categorymodals";
 
 /**
- * Knowledge-base search (§5.5). Fuzzy search scoped to a configurable list of
- * folders (by default `Knowledge base/Notes` and `Second brain` — two roots).
- * Matches filenames and headings (read from the metadata cache, so it stays
- * instant on mobile). Enter opens the top hit; arrow keys navigate on desktop.
+ * Knowledge-base search + light organisation (§5.5). Fuzzy search scoped to a
+ * configurable list of folders (by default `Knowledge base/Notes` and
+ * `Second brain` — two roots), matching filenames and headings. Enter opens the
+ * top hit; arrow keys navigate.
+ *
+ * The card also carries the note/category management from the sibling dashboard:
+ * make a note, make a category, and file a note under a category. Membership is
+ * tracked both ways (a wikilink in the category note and a `categories:`
+ * frontmatter entry), handled by the shared library store.
  */
 interface Candidate {
 	file: TFile;
@@ -51,16 +57,64 @@ export class SearchPanel extends BasePanel {
 		this.buildIndex();
 		placard(this.el, "Search");
 
+		// Note + category management (operates on the Knowledge base library).
+		const store = this.ctx.plugin.knowledgeBase;
+		const actions = this.el.createDiv({ cls: "dash-btn-row" });
+		const note = actions.createEl("button", { cls: "dash-btn dash-btn-primary", text: "+ Note" });
+		note.addEventListener("click", () => new NewNoteModal(this.ctx.app, store, () => this.rerender()).open());
+		const cat = actions.createEl("button", { cls: "dash-btn", text: "+ Category" });
+		cat.addEventListener("click", () => new NewCategoryModal(this.ctx.app, store, () => this.rerender()).open());
+		const assign = actions.createEl("button", { cls: "dash-btn", text: "File under category" });
+		assign.addEventListener("click", () => runAssignFlow(this.ctx.app, store, () => this.rerender()));
+
 		const input = this.el.createEl("input", {
 			cls: "dash-search-input",
 			attr: { type: "search", placeholder: "Search your notes…", enterkeyhint: "search" },
 		});
 		this.inputEl = input;
+		this.bindTextFocus(input);
 		this.resultsEl = this.el.createDiv({ cls: "dash-search-results" });
 
 		input.addEventListener("input", () => this.runQuery(input.value));
 		input.addEventListener("keydown", (e) => this.onKey(e));
 		this.runQuery("");
+
+		this.renderCategories();
+	}
+
+	private renderCategories(): void {
+		const store = this.ctx.plugin.knowledgeBase;
+		const cats = store.listCategories();
+		const section = this.el.createDiv({ cls: "dash-sb-cats" });
+		section.createDiv({ cls: "dash-subhead", text: `Categories · ${cats.length}` });
+		if (cats.length === 0) {
+			section.createDiv({ cls: "dash-muted", text: "No categories yet. Make one to start grouping your notes." });
+			return;
+		}
+		const listEl = section.createDiv();
+		// Read every category's members up front so the counts show immediately.
+		void (async () => {
+			const withMembers = await Promise.all(
+				cats.map(async (c) => ({ cat: c, members: await store.categoryMembers(c.file) }))
+			);
+			if (!listEl.isConnected) return;
+			for (const { cat, members } of withMembers) {
+				const details = listEl.createEl("details", { cls: "dash-sb-cat" });
+				const summary = details.createEl("summary");
+				summary.createSpan({ cls: "dash-sb-cat-name", text: cat.name });
+				summary.createSpan({ cls: "dash-chip dash-chip-cold", text: String(members.length) });
+				const body = details.createDiv({ cls: "dash-sb-cat-body" });
+				if (members.length === 0) body.createDiv({ cls: "dash-muted", text: "Empty." });
+				for (const m of members) {
+					const row = body.createDiv({ cls: "dash-sb-member" });
+					const link = row.createEl("a", { cls: "dash-sb-link", text: m });
+					link.addEventListener("click", (e) => {
+						e.preventDefault();
+						void this.ctx.app.workspace.openLinkText(m, cat.file.path, false);
+					});
+				}
+			}
+		})();
 	}
 
 	private runQuery(query: string): void {

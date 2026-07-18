@@ -19,9 +19,10 @@ you from a fresh install to a working dashboard.
 | **Verse of the Day** | One verse of Proverbs, chosen from the date. King James Version (public domain). No commentary. |
 | **To-do** | A persistent to-do list with recurring items and scheduling. Nothing resets overnight; completing a task logs it in today's note. |
 | **Today's Agenda** | Today's events from up to 20 calendar share links (public `.ics` URLs). Scrolls inside a fixed height and jumps to "now". |
-| **Journal** | Writes straight into the `# Today`, `# Journal`, and `# Notes` sections of today's daily note. |
+| **Journal** | Writes into the `# Brain dump`, `# Journal`, and `# Reference tomorrow` sections of today's daily note. Yesterday's "Reference tomorrow" is carried to the top so it greets you today. |
 | **Meals** | Today's planned recipes and grocery list, via the Recipe Manager add-on. Hides itself politely if that add-on isn't installed. |
-| **Search** | Fuzzy search across your chosen folders (filenames and headings). |
+| **Search** | Fuzzy search across your chosen folders (filenames and headings), plus make notes, make categories, and file notes under a category. |
+| **Calendar** | A month grid — click a day to open its daily note. A button opens a Bases table of all daily notes, and a search box finds words inside daily-note bodies (ignoring the shared section headings). |
 | **Second Brain** | Your active projects; archive a finished one (links are kept) or start a new one. |
 | **Places** | Shortcut buttons to your favourite notes, folders, and commands. |
 

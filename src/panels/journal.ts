@@ -1,14 +1,27 @@
+import { moment } from "obsidian";
 import { BasePanel, RefreshReason, placard } from "./types";
-import { FieldSpec, headingField, readDailyField, writeDailyField } from "../core/dailynote";
+import {
+	FieldSpec,
+	headingField,
+	readDailyField,
+	readDailyNoteRaw,
+	readField,
+	writeDailyField,
+} from "../core/dailynote";
 
 /**
  * Journal / free-text panel (§5.4). Three editable fields, each an editor for a
- * section of today's daily note: Today, Journal, and Notes. Debounced autosave
- * (~800ms); textareas that grow. These are editors *for the note*, not a
- * separate store — the writes go through the safe daily-note writer
- * (`vault.process`, or a live-editor reconcile if today's note is open in
- * another pane). On an external refresh we reload values unless the user is
- * mid-edit, so we never yank text out from under them.
+ * section of today's daily note:
+ *   - Brain dump         (`# Brain dump`)
+ *   - Journal            (`# Journal`)
+ *   - Reference tomorrow (`# Reference tomorrow`) — things to carry to the next day
+ *
+ * Yesterday's "Reference tomorrow" is shown read-only at the very top, so the
+ * things put there for "the next day" greet you today. Debounced autosave
+ * (~800ms); textareas grow. Writes go through the safe daily-note writer
+ * (`vault.process`, or a live-editor reconcile if today's note is open
+ * elsewhere). While a field is focused the whole dashboard stops refreshing, so
+ * nothing jumps under the cursor.
  */
 interface FieldDef {
 	key: string;
@@ -17,9 +30,9 @@ interface FieldDef {
 }
 
 const FIELDS: FieldDef[] = [
-	{ key: "today", label: "Today", spec: headingField("Today") },
+	{ key: "braindump", label: "Brain dump", spec: headingField("Brain dump") },
 	{ key: "journal", label: "Journal", spec: headingField("Journal") },
-	{ key: "notes", label: "Notes", spec: headingField("Notes") },
+	{ key: "reference", label: "Reference tomorrow", spec: headingField("Reference tomorrow") },
 ];
 
 export class JournalPanel extends BasePanel {
@@ -38,10 +51,27 @@ export class JournalPanel extends BasePanel {
 
 	protected async renderBody(): Promise<void> {
 		placard(this.el, "Journal");
+		await this.renderYesterdayReference();
 		const wrap = this.el.createDiv({ cls: "dash-journal" });
 		for (const field of FIELDS) {
 			await this.renderField(wrap, field);
 		}
+	}
+
+	/** Read-only carry-over of yesterday's "Reference tomorrow" onto today. */
+	private async renderYesterdayReference(): Promise<void> {
+		const yesterday = moment().subtract(1, "day").format("YYYY-MM-DD");
+		let text = "";
+		try {
+			const raw = await readDailyNoteRaw(this.ctx.app, yesterday);
+			text = readField(raw, headingField("Reference tomorrow")).trim();
+		} catch (e) {
+			console.error("Daily Dashboard: could not read yesterday's reference note", e);
+		}
+		if (!text) return; // nothing to carry — stay quiet
+		const block = this.el.createDiv({ cls: "dash-carry" });
+		block.createDiv({ cls: "dash-carry-label", text: "From yesterday — to reference today" });
+		block.createDiv({ cls: "dash-carry-body", text });
 	}
 
 	private async renderField(parent: HTMLElement, field: FieldDef): Promise<void> {
@@ -59,10 +89,12 @@ export class JournalPanel extends BasePanel {
 		};
 		ta.addEventListener("focus", () => {
 			this.editing = true;
+			this.ctx.runtime.textFocused = true;
 			this.ctx.runtime.typingUntil = Date.now() + 2000;
 		});
 		ta.addEventListener("blur", () => {
 			this.editing = false;
+			this.ctx.runtime.textFocused = false;
 			this.ctx.runtime.typingUntil = 0;
 			if (timer !== null) {
 				window.clearTimeout(timer);
@@ -71,7 +103,6 @@ export class JournalPanel extends BasePanel {
 			save();
 		});
 		ta.addEventListener("input", () => {
-			// Hold off the vault-refresh bus while typing so the layout doesn't jump.
 			this.ctx.runtime.typingUntil = Date.now() + 2000;
 			autosize(ta);
 			if (timer !== null) window.clearTimeout(timer);

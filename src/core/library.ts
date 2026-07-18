@@ -137,12 +137,14 @@ export class LibraryStore {
 		return this.app.vault.create(path, body);
 	}
 
-	/** Create a note in the notes folder, optionally assigning a category. */
+	/** Create a note in the notes folder, optionally assigning a category. The
+	 * note starts empty — the filename is the title; we don't inject a duplicate
+	 * H1 heading. */
 	async createNote(title: string, category?: string): Promise<TFile> {
 		const clean = this.sanitize(title);
 		await this.ensureFolder(this.notesFolder());
 		const path = this.uniquePath(this.notesFolder(), clean);
-		const file = await this.app.vault.create(path, `# ${clean}\n\n`);
+		const file = await this.app.vault.create(path, "");
 		if (category) await this.assign(file, category);
 		return file;
 	}
