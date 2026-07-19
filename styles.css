@@ -372,6 +372,7 @@
 
 /* --------------------------------------------------------------- agenda */
 
+.dash-agenda-toolbar { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 .dash-agenda-list {
 	overflow-y: auto;
 	border: var(--dash-rule-weight) solid var(--dash-border);

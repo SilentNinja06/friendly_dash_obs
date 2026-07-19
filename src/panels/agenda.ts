@@ -41,6 +41,11 @@ export class AgendaPanel extends BasePanel {
 		const head = placard(this.el, "Today's Agenda");
 		head.createSpan({ cls: "dash-placard-badge", text: moment().format("ddd, MMM D") });
 
+		const toolbar = this.el.createDiv({ cls: "dash-agenda-toolbar" });
+		const printBtn = toolbar.createEl("button", { cls: "dash-btn", text: "🖨 Print week" });
+		printBtn.setAttr("title", "Open a printable week-at-a-glance planner for this week");
+		printBtn.addEventListener("click", () => this.printWeek());
+
 		if (s.agendaUrls.length === 0) {
 			this.el.createDiv({
 				cls: "dash-empty",
@@ -206,6 +211,71 @@ export class AgendaPanel extends BasePanel {
 		}
 		if (this.el?.isConnected) this.rerender();
 	}
+
+	// ----------------------------------------------------- printable week
+
+	/** Resolve the theme's calendar swatch colours to concrete hex, so the
+	 * printout matches the on-screen colour-coding. Reads the computed
+	 * `--dash-cal-N` custom properties from the live panel. */
+	private resolveCalColors(): string[] {
+		const cs = getComputedStyle(this.el);
+		const out: string[] = [];
+		for (let i = 1; i <= 8; i++) {
+			const v = cs.getPropertyValue(`--dash-cal-${i}`).trim();
+			out.push(v || FALLBACK_CAL_COLORS[i - 1]);
+		}
+		return out;
+	}
+
+	/** Build and print a week-at-a-glance planner for the current week, with
+	 * events colour-coded by the calendar they came from and ruled blank space
+	 * to write in. Opens in a hidden iframe so only the planner prints. */
+	private printWeek(): void {
+		const s = this.ctx.settings();
+		const colors = this.resolveCalColors();
+
+		// Parse each calendar once, then query all seven days.
+		const calendars = s.agendaUrls.map((cal, i) => {
+			const cache = this.ctx.plugin.agendaCache[cal.url];
+			let events: ReturnType<typeof parseICS> = [];
+			if (cache) {
+				try {
+					events = parseICS(cache.text);
+				} catch {
+					/* skip an unparseable calendar */
+				}
+			}
+			return { events, color: colors[i % colors.length], label: cal.label };
+		});
+
+		const start = startOfWeek(new Date());
+		const days: PrintDay[] = [];
+		for (let d = 0; d < 7; d++) {
+			const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + d);
+			const dateStr = fmtLocal(date);
+			const items: PrintItem[] = [];
+			for (const cal of calendars) {
+				for (const item of eventsOnDate(cal.events, dateStr)) {
+					items.push({ item, color: cal.color, label: cal.label });
+				}
+			}
+			items.sort((a, b) => a.item.sortKey - b.item.sortKey || a.item.summary.localeCompare(b.item.summary));
+			days.push({ date, items });
+		}
+
+		const legend = calendars.map((c) => ({ label: c.label, color: c.color }));
+		openPrintDocument(buildWeekHtml(days, legend, start));
+	}
+}
+
+interface PrintItem {
+	item: AgendaItem;
+	color: string;
+	label: string;
+}
+interface PrintDay {
+	date: Date;
+	items: PrintItem[];
 }
 
 function humanizeFetchError(e: unknown): string {
@@ -214,4 +284,161 @@ function humanizeFetchError(e: unknown): string {
 	if (/HTTP\s*5\d\d/.test(msg)) return "the calendar server had an error";
 	if (/network|fetch|ENOTFOUND|timeout/i.test(msg)) return "no connection";
 	return msg;
+}
+
+// ------------------------------------------------------- printable week helpers
+
+/** Used only if a theme's --dash-cal-N can't be read (should not happen). */
+const FALLBACK_CAL_COLORS = ["#186a5b", "#2f6f97", "#8a5a2b", "#6b6f2f", "#7a3f6b", "#2f7f7a", "#a6602b", "#4a4f8a"];
+
+/** Sunday of the week containing `d` (matches the in-app calendar's week start). */
+function startOfWeek(d: Date): Date {
+	const s = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+	s.setDate(s.getDate() - s.getDay());
+	return s;
+}
+
+function fmtLocal(d: Date): string {
+	const p = (n: number) => String(n).padStart(2, "0");
+	return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function escapeHtml(s: string): string {
+	return s
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;");
+}
+
+interface Legend {
+	label: string;
+	color: string;
+}
+
+/** A self-contained, print-styled week-at-a-glance document. Calendar data is
+ * untrusted, so every summary/location/label is HTML-escaped. */
+function buildWeekHtml(days: PrintDay[], legend: Legend[], weekStart: Date): string {
+	const weekEnd = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6);
+	const title = `${moment(weekStart).format("MMMM D")} – ${moment(weekEnd).format("MMMM D, YYYY")}`;
+
+	const legendHtml = legend.length
+		? `<div class="legend">${legend
+				.map((l) => `<span class="leg"><span class="dot" style="background:${l.color}"></span>${escapeHtml(l.label)}</span>`)
+				.join("")}</div>`
+		: "";
+
+	const dayCells = days
+		.map((day) => {
+			const events = day.items
+				.map((pi) => {
+					const time = pi.item.allDay ? "all day" : escapeHtml(pi.item.timeLabel);
+					const title = escapeHtml(pi.item.summary || "(untitled)");
+					const loc = pi.item.location ? ` · ${escapeHtml(pi.item.location)}` : "";
+					return `<div class="evt" style="border-left-color:${pi.color}">
+						<span class="evt-dot" style="background:${pi.color}"></span>
+						<span class="evt-time">${time}</span>
+						<span class="evt-title">${title}<span class="evt-cal">${escapeHtml(pi.label)}${loc}</span></span>
+					</div>`;
+				})
+				.join("");
+			return `<section class="day">
+				<header class="day-h">
+					<span class="day-name">${moment(day.date).format("dddd")}</span>
+					<span class="day-date">${moment(day.date).format("MMM D")}</span>
+				</header>
+				<div class="events">${events}</div>
+				<div class="write"></div>
+			</section>`;
+		})
+		.join("");
+
+	// An 8th cell: free-form notes for the week.
+	const notesCell = `<section class="day notes">
+			<header class="day-h"><span class="day-name">Notes &amp; to-do</span></header>
+			<div class="write tall"></div>
+		</section>`;
+
+	return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Week at a glance — ${escapeHtml(title)}</title>
+<style>
+	* { box-sizing: border-box; }
+	html, body { margin: 0; padding: 0; }
+	body {
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+		color: #111; background: #fff; padding: 14px;
+		-webkit-print-color-adjust: exact; print-color-adjust: exact;
+	}
+	h1 { font-size: 18px; margin: 0 0 2px; }
+	.sub { color: #555; font-size: 12px; margin-bottom: 8px; }
+	.legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0 12px; font-size: 11px; }
+	.leg { display: inline-flex; align-items: center; gap: 5px; }
+	.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+	.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+	.day { border: 1px solid #bbb; border-radius: 6px; padding: 6px 8px; min-height: 56mm; display: flex; flex-direction: column; break-inside: avoid; }
+	.day.notes { min-height: 56mm; }
+	.day-h { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px solid #ddd; padding-bottom: 3px; margin-bottom: 4px; }
+	.day-name { font-weight: 700; font-size: 13px; }
+	.day-date { color: #666; font-size: 12px; }
+	.events { display: flex; flex-direction: column; gap: 3px; margin-bottom: 4px; }
+	.evt { display: flex; align-items: baseline; gap: 6px; border-left: 4px solid #999; padding: 1px 0 1px 6px; font-size: 11px; }
+	.evt-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; align-self: center; }
+	.evt-time { flex: 0 0 auto; color: #333; font-variant-numeric: tabular-nums; min-width: 66px; }
+	.evt-title { font-weight: 600; }
+	.evt-cal { display: block; font-weight: 400; color: #777; font-size: 10px; }
+	.write { flex: 1 1 auto; min-height: 22mm; background-image: repeating-linear-gradient(to bottom, transparent, transparent 6mm, #e2e2e2 6mm, #e2e2e2 calc(6mm + 1px)); }
+	.write.tall { min-height: 48mm; }
+	@media print { body { padding: 0; } @page { margin: 12mm; } }
+</style></head>
+<body>
+	<h1>Week at a glance</h1>
+	<div class="sub">${escapeHtml(title)}</div>
+	${legendHtml}
+	<div class="grid">${dayCells}${notesCell}</div>
+</body></html>`;
+}
+
+/** Print an HTML document via a throwaway hidden iframe, so only the planner
+ * prints (not the whole Obsidian window). Desktop feature; on platforms without
+ * printing this simply does nothing visible. */
+function openPrintDocument(html: string): void {
+	const iframe = document.createElement("iframe");
+	iframe.setAttribute("aria-hidden", "true");
+	iframe.style.position = "fixed";
+	iframe.style.right = "0";
+	iframe.style.bottom = "0";
+	iframe.style.width = "0";
+	iframe.style.height = "0";
+	iframe.style.border = "0";
+	document.body.appendChild(iframe);
+
+	const win = iframe.contentWindow;
+	const doc = win?.document;
+	if (!win || !doc) {
+		iframe.remove();
+		return;
+	}
+	doc.open();
+	doc.write(html);
+	doc.close();
+
+	let removed = false;
+	const cleanup = () => {
+		if (removed) return;
+		removed = true;
+		iframe.remove();
+	};
+	win.addEventListener("afterprint", () => window.setTimeout(cleanup, 500));
+	// Fallback so the iframe never lingers if afterprint doesn't fire.
+	window.setTimeout(cleanup, 5 * 60 * 1000);
+
+	// Give the document a tick to lay out, then invoke print.
+	window.setTimeout(() => {
+		try {
+			win.focus();
+			win.print();
+		} catch {
+			cleanup();
+		}
+	}, 300);
 }
