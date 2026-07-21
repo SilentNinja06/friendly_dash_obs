@@ -7,7 +7,7 @@ import {
 	readDailyNoteRaw,
 	readField,
 	writeDailyField,
-} from "../core/dailynote";
+} from "dash-core";
 
 /**
  * Journal / free-text panel (§5.4). Three editable fields, each an editor for a

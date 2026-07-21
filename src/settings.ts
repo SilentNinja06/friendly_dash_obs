@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type DailyDashPlugin from "./main";
-import { TodoItem } from "./core/todostore";
+import { TodoItem } from "dash-core";
 import { PANEL_ORDER, PANEL_TITLES } from "./panels/registry";
 import { THEMES, DEFAULT_THEME, isThemeId } from "./core/themes";
 

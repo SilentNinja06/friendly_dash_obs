@@ -1,6 +1,6 @@
 import { moment } from "obsidian";
 import { BasePanel, placard } from "./types";
-import { AgendaItem, eventsOnDate, fetchICS, parseICS } from "../core/ics";
+import { AgendaItem, eventsOnDate, fetchICS, parseICS } from "dash-core";
 import { calendarColorVar } from "../core/themes";
 
 /**

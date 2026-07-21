@@ -7,9 +7,9 @@ import {
 	mergeSettings,
 } from "./settings";
 import { Bridge } from "./core/bridge";
-import { TodoStore } from "./core/todostore";
-import { DirectivesStore } from "./core/directivesstore";
-import { LibraryStore } from "./core/library";
+import { TodoStore } from "dash-core";
+import { DirectivesStore } from "dash-core";
+import { LibraryStore } from "dash-core";
 import { DashRuntime, RefreshReason } from "./panels/types";
 import { DashView, VIEW_TYPE_DASH } from "./view";
 
@@ -46,7 +46,12 @@ export default class DailyDashPlugin extends Plugin {
 			archiveSubfolder: this.settings.kbArchiveSubfolder,
 			listHeading: this.settings.kbListHeading,
 		}));
-		this.directives = new DirectivesStore(this.app, () => this.settings.directivesPath);
+		this.directives = new DirectivesStore(this.app, () => this.settings.directivesPath, {
+			header:
+				"%% Daily Dashboard — your saved to-do list. This file is managed " +
+				"automatically; add and edit your to-dos in the dashboard, not here. %%",
+			defaultPath: "Daily Dashboard/To-dos.md",
+		});
 		this.todos = new TodoStore(
 			this.app,
 			() => this.directives.getItems(),

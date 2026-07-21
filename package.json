@@ -1,14 +1,19 @@
 {
 	"name": "daily-dash",
 	"version": "0.3.0",
-	"description": "Daily Dashboard — a warm, general-purpose home surface for Obsidian: clock, verse of the day, today's agenda, persistent to-dos, journal, meals, and search.",
+	"description": "Daily Dashboard \u2014 a warm, general-purpose home surface for Obsidian: clock, verse of the day, today's agenda, persistent to-dos, journal, meals, and search.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"test": "node --import tsx --test src/tests/*.test.ts"
 	},
-	"keywords": ["obsidian", "obsidian-plugin", "dashboard", "home"],
+	"keywords": [
+		"obsidian",
+		"obsidian-plugin",
+		"dashboard",
+		"home"
+	],
 	"author": "SilentNinja06",
 	"license": "MIT",
 	"devDependencies": {
@@ -18,5 +23,8 @@
 		"tslib": "^2.6.2",
 		"tsx": "^4.19.0",
 		"typescript": "^5.4.5"
+	},
+	"dependencies": {
+		"dash-core": "github:SilentNinja06/dash_core_obs#7d7335daf26a366399a41e67050d9f8b36b87791"
 	}
 }

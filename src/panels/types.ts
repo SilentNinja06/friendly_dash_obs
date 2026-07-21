@@ -1,7 +1,7 @@
 import { App } from "obsidian";
 import type DailyDashPlugin from "../main";
 import type { Bridge } from "../core/bridge";
-import type { TodoStore } from "../core/todostore";
+import type { TodoStore } from "dash-core";
 import type { DashSettings } from "../settings";
 
 export type RefreshReason = "open" | "interval" | "vault" | "manual";

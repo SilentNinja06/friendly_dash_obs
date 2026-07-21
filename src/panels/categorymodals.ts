@@ -1,5 +1,5 @@
 import { App, FuzzySuggestModal, Modal, Notice, Setting, TFile } from "obsidian";
-import { LibraryStore } from "../core/library";
+import { LibraryStore } from "dash-core";
 
 /** Create a note in a library and optionally assign it to a category (existing
  * from the dropdown, or a new one typed in) right from the creation modal. The

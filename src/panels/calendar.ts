@@ -1,6 +1,6 @@
 import { Notice, TFile, moment } from "obsidian";
 import { BasePanel, placard } from "./types";
-import { ensureDailyNote, getDailyNoteFile } from "../core/dailynote";
+import { ensureDailyNote, getDailyNoteFile } from "dash-core";
 import { DailyBodyHit, ensureDailyNotesBase, searchDailyNoteBodies } from "../core/dailynotes";
 
 /**
