@@ -20,7 +20,7 @@ export default class DailyDashPlugin extends Plugin {
 	directives!: DirectivesStore;
 	secondBrain!: LibraryStore;
 	knowledgeBase!: LibraryStore;
-	runtime: DashRuntime = { typingUntil: 0, textFocused: false };
+	runtime: DashRuntime = { sessionStart: Date.now(), previousAccess: 0, typingUntil: 0, textFocused: false };
 
 	private data!: DashData;
 	private refreshTimer: number | null = null;

@@ -1,14 +1,15 @@
 import { Panel } from "./types";
+import type DailyDashPlugin from "../main";
+import { SearchPanel, SecondBrainPanel } from "dash-core";
 import { ClockPanel } from "./clock";
 import { VersePanel } from "./verse";
 import { TodoPanel } from "./todo";
 import { AgendaPanel } from "./agenda";
 import { JournalPanel } from "./journal";
 import { MealsPanel } from "./meals";
-import { SearchPanel } from "./search";
-import { SecondBrainPanel } from "./secondbrain";
 import { CalendarPanel } from "./calendar";
 import { PlacesPanel } from "./places";
+import { FRIENDLY_SEARCH_COPY, FRIENDLY_SECOND_BRAIN_COPY, FRIENDLY_CATEGORY_COPY } from "../copy";
 
 /** Registration order = default panel order. Everything ships enabled; the
  * layout is responsive (one column on a phone, a grid on the desktop), and every
@@ -41,28 +42,29 @@ export const PANEL_TITLES: Record<string, string> = {
 
 type PanelFactory = () => Panel;
 
-const FACTORIES: Record<string, PanelFactory> = {
-	clock: () => new ClockPanel(),
-	verse: () => new VersePanel(),
-	todo: () => new TodoPanel(),
-	agenda: () => new AgendaPanel(),
-	journal: () => new JournalPanel(),
-	meals: () => new MealsPanel(),
-	search: () => new SearchPanel(),
-	calendar: () => new CalendarPanel(),
-	secondbrain: () => new SecondBrainPanel(),
-	places: () => new PlacesPanel(),
-};
+/** Build the enabled panels in the configured order. Factories close over the
+ * plugin so core panels can be constructed with the host stores/copy they need. */
+export function createPanels(order: string[], enabled: Record<string, boolean>, plugin: DailyDashPlugin): Panel[] {
+	const factories: Record<string, PanelFactory> = {
+		clock: () => new ClockPanel(),
+		verse: () => new VersePanel(),
+		todo: () => new TodoPanel(),
+		agenda: () => new AgendaPanel(),
+		journal: () => new JournalPanel(),
+		meals: () => new MealsPanel(),
+		search: () => new SearchPanel(plugin.knowledgeBase, FRIENDLY_SEARCH_COPY, FRIENDLY_CATEGORY_COPY),
+		calendar: () => new CalendarPanel(),
+		secondbrain: () => new SecondBrainPanel(plugin.secondBrain, FRIENDLY_SECOND_BRAIN_COPY),
+		places: () => new PlacesPanel(),
+	};
 
-/** Build the enabled panels in the configured order. */
-export function createPanels(order: string[], enabled: Record<string, boolean>): Panel[] {
 	const seen = new Set<string>();
 	const panels: Panel[] = [];
 	for (const id of order) {
 		if (seen.has(id)) continue;
 		seen.add(id);
 		if (enabled[id] === false) continue;
-		const factory = FACTORIES[id];
+		const factory = factories[id];
 		if (factory) panels.push(factory());
 	}
 	return panels;
