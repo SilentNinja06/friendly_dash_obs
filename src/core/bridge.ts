@@ -1,5 +1,5 @@
 import { App, TFile, moment } from "obsidian";
-import { readDailyNoteRaw, readHeadingSection } from "./dailynote";
+import { readDailyNoteRaw, readHeadingSection } from "dash-core";
 
 /**
  * The one place that reaches into a sibling plugin — here, Recipe Manager. Reads

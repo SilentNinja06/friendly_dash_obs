@@ -1,5 +1,5 @@
 import { App, TFile, normalizePath } from "obsidian";
-import { dailyNotesFolder } from "./dailynote";
+import { dailyNotesFolder } from "dash-core";
 
 /**
  * Helpers for the Calendar card (§5.9): enumerating daily-note files, searching

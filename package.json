@@ -8,7 +8,12 @@
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"test": "node --import tsx --test src/tests/*.test.ts"
 	},
-	"keywords": ["obsidian", "obsidian-plugin", "dashboard", "home"],
+	"keywords": [
+		"obsidian",
+		"obsidian-plugin",
+		"dashboard",
+		"home"
+	],
 	"author": "SilentNinja06",
 	"license": "MIT",
 	"devDependencies": {
@@ -18,5 +23,8 @@
 		"tslib": "^2.6.2",
 		"tsx": "^4.19.0",
 		"typescript": "^5.4.5"
+	},
+	"dependencies": {
+		"dash-core": "github:SilentNinja06/dash_core_obs#e4f8099a682b755a6e53658ba47b3748db1c7609"
 	}
 }

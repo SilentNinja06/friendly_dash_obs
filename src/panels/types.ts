@@ -1,13 +1,26 @@
 import { App } from "obsidian";
 import type DailyDashPlugin from "../main";
 import type { Bridge } from "../core/bridge";
-import type { TodoStore } from "../core/todostore";
+import type {
+	TodoStore,
+	StreakData,
+	CompanionData,
+	DashCopy,
+	LocalEvent,
+	AgendaCacheEntry,
+} from "dash-core";
 import type { DashSettings } from "../settings";
 
 export type RefreshReason = "open" | "interval" | "vault" | "manual";
 
-/** Cross-panel runtime hints (not persisted). */
+/** Cross-panel runtime hints (not persisted). A superset of the core
+ * `DashRuntime` capability so core panels can read `sessionStart`/`previousAccess`
+ * (the clock's "since last visit" line) and defer refresh via `typingUntil`. */
 export interface DashRuntime {
+	/** ms timestamp the current view session started. */
+	sessionStart: number;
+	/** ms timestamp of the previous session's last access (for "since last visit"). */
+	previousAccess: number;
 	/** While `Date.now() < typingUntil`, the user is typing in a free-text field;
 	 * the vault-refresh bus is deferred so the layout doesn't jump under them. */
 	typingUntil: number;
@@ -17,15 +30,37 @@ export interface DashRuntime {
 	textFocused: boolean;
 }
 
+/**
+ * The dashboard's panel context. This is a structural superset of the core
+ * `PanelContext` capability surface, so any core panel can be mounted with this
+ * object, while friendly's own panels additionally reach `plugin`/`bridge`.
+ * Members core panels never use on this dashboard (streak, some companion
+ * readers, local events) are supplied with neutral defaults by the view.
+ */
 export interface PanelContext {
 	app: App;
 	plugin: DailyDashPlugin;
 	bridge: Bridge;
 	todos: TodoStore;
+	/** Observation-streak snapshot. This dashboard has no streak concept, so the
+	 * view supplies a zeroed default; kept only to satisfy the core surface. */
+	streak: StreakData;
+	/** Companion-plugin data (Recipe Manager, via the bridge adapter). */
+	companion: CompanionData;
 	runtime: DashRuntime;
+	/** Host-injected chrome/status copy for core panels that read it from context. */
+	copy: DashCopy;
 	settings(): DashSettings;
+	/** Per-calendar ICS cache (raw text + fetch time), keyed by url. */
+	agendaCache: Record<string, AgendaCacheEntry>;
+	/** Dashboard-only local events. This dashboard has none yet → empty. */
+	localEvents: LocalEvent[];
+	/** Persist plugin data (e.g. after refreshing the agenda cache). */
+	persist(): Promise<void>;
 	/** Re-render all mounted panels. */
 	requestRefresh(reason?: RefreshReason): void;
+	/** No-op here: this dashboard has no food-focus concept. */
+	markFoodFocus(): void;
 }
 
 /** A dashboard panel module. */
