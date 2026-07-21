@@ -1,6 +1,6 @@
 import { Panel } from "./types";
 import type DailyDashPlugin from "../main";
-import { SearchPanel, SecondBrainPanel } from "dash-core";
+import { SearchPanel, SecondBrainPanel, PlacesPanel } from "dash-core";
 import { ClockPanel } from "./clock";
 import { VersePanel } from "./verse";
 import { TodoPanel } from "./todo";
@@ -8,8 +8,12 @@ import { AgendaPanel } from "./agenda";
 import { JournalPanel } from "./journal";
 import { MealsPanel } from "./meals";
 import { CalendarPanel } from "./calendar";
-import { PlacesPanel } from "./places";
-import { FRIENDLY_SEARCH_COPY, FRIENDLY_SECOND_BRAIN_COPY, FRIENDLY_CATEGORY_COPY } from "../copy";
+import {
+	FRIENDLY_SEARCH_COPY,
+	FRIENDLY_SECOND_BRAIN_COPY,
+	FRIENDLY_CATEGORY_COPY,
+	FRIENDLY_PLACES_COPY,
+} from "../copy";
 
 /** Registration order = default panel order. Everything ships enabled; the
  * layout is responsive (one column on a phone, a grid on the desktop), and every
@@ -55,7 +59,7 @@ export function createPanels(order: string[], enabled: Record<string, boolean>, 
 		search: () => new SearchPanel(plugin.knowledgeBase, FRIENDLY_SEARCH_COPY, FRIENDLY_CATEGORY_COPY),
 		calendar: () => new CalendarPanel(),
 		secondbrain: () => new SecondBrainPanel(plugin.secondBrain, FRIENDLY_SECOND_BRAIN_COPY),
-		places: () => new PlacesPanel(),
+		places: () => new PlacesPanel(FRIENDLY_PLACES_COPY),
 	};
 
 	const seen = new Set<string>();

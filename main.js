@@ -1515,6 +1515,66 @@ var CategoryPromptModal = class extends import_obsidian9.Modal {
 // node_modules/dash-core/src/panels/clock.ts
 var import_obsidian10 = require("obsidian");
 
+// node_modules/dash-core/src/panels/util.ts
+function commandExists(app, fullId) {
+  var _a, _b;
+  const commands = (_b = (_a = app.commands) == null ? void 0 : _a.commands) != null ? _b : {};
+  return !!commands[fullId];
+}
+function runCommand(app, fullId) {
+  var _a, _b;
+  (_b = (_a = app.commands) == null ? void 0 : _a.executeCommandById) == null ? void 0 : _b.call(_a, fullId);
+}
+function commandButton(parent, app, fullId, label, opts = {}) {
+  var _a;
+  const btn = parent.createEl("button", { cls: `dash-btn ${(_a = opts.cls) != null ? _a : ""}`.trim(), text: label });
+  if (!commandExists(app, fullId)) {
+    btn.setAttr("disabled", "true");
+    btn.addClass("is-unavailable");
+    if (opts.offlineText) btn.setAttr("title", opts.offlineText);
+    return btn;
+  }
+  btn.addEventListener("click", () => {
+    var _a2;
+    runCommand(app, fullId);
+    (_a2 = opts.onRun) == null ? void 0 : _a2.call(opts);
+  });
+  return btn;
+}
+
+// node_modules/dash-core/src/panels/places.ts
+var PlacesPanel = class extends BasePanel {
+  constructor(copy) {
+    super();
+    this.copy = copy;
+    __publicField(this, "id", "places");
+    __publicField(this, "title");
+    this.title = copy.title;
+  }
+  renderBody() {
+    placard(this.el, this.copy.title);
+    const grid = this.el.createDiv({ cls: "dash-places" });
+    const places = this.ctx.settings().places;
+    if (places.length === 0) {
+      grid.createDiv({ cls: "dash-muted", text: this.copy.empty });
+      return;
+    }
+    for (const place of places) {
+      if (place.type === "command") {
+        commandButton(grid, this.ctx.app, place.target, place.label, {
+          cls: "dash-place-btn",
+          offlineText: this.copy.commandOffline
+        });
+      } else {
+        const btn = grid.createEl("button", { cls: "dash-btn dash-place-btn", text: place.label });
+        btn.addEventListener("click", () => {
+          void this.ctx.app.workspace.openLinkText(place.target, "", false);
+        });
+      }
+    }
+  }
+};
+
 // node_modules/dash-core/src/panels/localeventmodal.ts
 var import_obsidian11 = require("obsidian");
 
@@ -3147,34 +3207,6 @@ function fmt(d) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-// src/panels/places.ts
-var PlacesPanel = class extends BasePanel2 {
-  constructor() {
-    super(...arguments);
-    this.id = "places";
-    this.title = "Places";
-  }
-  renderBody() {
-    placard2(this.el, "Places");
-    const grid = this.el.createDiv({ cls: "dash-places" });
-    const places = this.ctx.settings().places;
-    if (places.length === 0) {
-      grid.createDiv({ cls: "dash-empty", text: "No places yet. Add shortcuts to your favourite notes and folders in the plugin settings." });
-      return;
-    }
-    for (const place of places) {
-      if (place.type === "command") {
-        commandButton2(grid, this.ctx.bridge, place.target, place.label, { cls: "dash-place-btn" });
-      } else {
-        const btn = grid.createEl("button", { cls: "dash-btn dash-place-btn", text: place.label });
-        btn.addEventListener("click", () => {
-          void this.ctx.app.workspace.openLinkText(place.target, "", false);
-        });
-      }
-    }
-  }
-};
-
 // src/copy.ts
 var FRIENDLY_CATEGORY_COPY = {
   newNoteTitle: "New note",
@@ -3214,6 +3246,11 @@ var FRIENDLY_SEARCH_COPY = {
   recentHeading: "Recently edited \xB7 {n}",
   noNotesInScope: "No notes to search here yet.",
   noMatches: "No matching notes."
+};
+var FRIENDLY_PLACES_COPY = {
+  title: "Places",
+  empty: "No places yet. Add shortcuts to your favourite notes and folders in the plugin settings.",
+  commandOffline: "This button needs its plugin. Enable the matching plugin to turn it on."
 };
 var FRIENDLY_SECOND_BRAIN_COPY = {
   title: "Second Brain",
@@ -3277,7 +3314,7 @@ function createPanels(order, enabled, plugin) {
     search: () => new SearchPanel(plugin.knowledgeBase, FRIENDLY_SEARCH_COPY, FRIENDLY_CATEGORY_COPY),
     calendar: () => new CalendarPanel(),
     secondbrain: () => new SecondBrainPanel(plugin.secondBrain, FRIENDLY_SECOND_BRAIN_COPY),
-    places: () => new PlacesPanel()
+    places: () => new PlacesPanel(FRIENDLY_PLACES_COPY)
   };
   const seen = /* @__PURE__ */ new Set();
   const panels = [];

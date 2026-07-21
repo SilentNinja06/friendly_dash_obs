@@ -1,4 +1,4 @@
-import type { SearchCopy, SecondBrainCopy, CategoryModalsCopy } from "dash-core";
+import type { SearchCopy, SecondBrainCopy, CategoryModalsCopy, PlacesCopy } from "dash-core";
 
 /**
  * Friendly, plain-language copy for the core library panels this dashboard
@@ -49,6 +49,13 @@ export const FRIENDLY_SEARCH_COPY: SearchCopy = {
 	recentHeading: "Recently edited · {n}",
 	noNotesInScope: "No notes to search here yet.",
 	noMatches: "No matching notes.",
+};
+
+/** The Places / navigation card. */
+export const FRIENDLY_PLACES_COPY: PlacesCopy = {
+	title: "Places",
+	empty: "No places yet. Add shortcuts to your favourite notes and folders in the plugin settings.",
+	commandOffline: "This button needs its plugin. Enable the matching plugin to turn it on.",
 };
 
 /** The Second Brain (ongoing-projects) card. */
