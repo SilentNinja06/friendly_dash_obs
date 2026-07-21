@@ -1,4 +1,5 @@
-import type { SearchCopy, SecondBrainCopy, CategoryModalsCopy, PlacesCopy } from "dash-core";
+import { headingField } from "dash-core";
+import type { SearchCopy, SecondBrainCopy, CategoryModalsCopy, PlacesCopy, JournalCopy, MealsCopy } from "dash-core";
 
 /**
  * Friendly, plain-language copy for the core library panels this dashboard
@@ -49,6 +50,42 @@ export const FRIENDLY_SEARCH_COPY: SearchCopy = {
 	recentHeading: "Recently edited · {n}",
 	noNotesInScope: "No notes to search here yet.",
 	noMatches: "No matching notes.",
+};
+
+/** The Journal card — three free-text sections of today's daily note, plus a
+ * read-only carry of yesterday's "Reference tomorrow". */
+export const FRIENDLY_JOURNAL_COPY: JournalCopy = {
+	title: "Journal",
+	carryHeading: "Reference tomorrow",
+	carryLabel: "From yesterday — to reference today",
+	fields: [
+		{ label: "Brain dump", spec: headingField("Brain dump"), placeholder: "Write in “Brain dump”…" },
+		{ label: "Journal", spec: headingField("Journal"), placeholder: "Write in “Journal”…" },
+		{ label: "Reference tomorrow", spec: headingField("Reference tomorrow"), placeholder: "Write in “Reference tomorrow”…" },
+	],
+};
+
+/** The Meals + grocery card (reads Recipe Manager through the bridge). The
+ * grocery list is read-only here — checking happens in Recipe Manager. */
+export const FRIENDLY_MEALS_COPY: MealsCopy = {
+	title: "Meals",
+	offline:
+		"This panel works with the Recipe Manager plugin. Once it's installed and turned on, your planned meals and grocery list show up here. You can also hide this panel in the plugin settings.",
+	plannedHeading: "Planned today",
+	noMeals: "No meals planned for today.",
+	openRecipe: "Open recipe →",
+	groceryHeading: "Grocery list",
+	noGroceryAt: "No grocery list yet. Use “Build grocery list” below to make one.",
+	groceryEmpty: "Your grocery list is empty.",
+	remaining: "{remaining} of {total} still to get",
+	commandOffline: "This button needs its plugin. Enable the matching plugin to turn it on.",
+	commands: [
+		{ id: "recipe-manager:meal-plan", label: "Plan a meal", cls: "dash-btn-primary" },
+		{ id: "recipe-manager:grocery-list", label: "Build grocery list" },
+		{ id: "recipe-manager:open-recipe", label: "Open a recipe" },
+		{ id: "recipe-manager:new-recipe", label: "New recipe" },
+		{ id: "recipe-manager:recipe-index", label: "All recipes" },
+	],
 };
 
 /** The Places / navigation card. */

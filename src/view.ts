@@ -3,6 +3,7 @@ import type DailyDashPlugin from "./main";
 import { DEFAULT_STREAK } from "dash-core";
 import { Panel, PanelContext, RefreshReason } from "./panels/types";
 import { createPanels } from "./panels/registry";
+import { friendlyCompanion } from "./companion";
 
 export const VIEW_TYPE_DASH = "daily-dashboard";
 
@@ -47,8 +48,8 @@ export class DashView extends ItemView {
 			// This dashboard has no observation-streak concept; a zeroed snapshot
 			// satisfies the core panel surface without introducing the notion.
 			streak: DEFAULT_STREAK,
-			// Companion readers are wired per-panel as they migrate (meals → recipes).
-			companion: {},
+			// Recipe Manager, adapted to the generic companion surface (read-only).
+			companion: friendlyCompanion(this.plugin.bridge),
 			runtime: this.plugin.runtime,
 			// Core library panels take their copy via their constructors; nothing
 			// reads context copy on this dashboard yet.

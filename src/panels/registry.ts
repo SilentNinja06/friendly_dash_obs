@@ -1,18 +1,18 @@
 import { Panel } from "./types";
 import type DailyDashPlugin from "../main";
-import { SearchPanel, SecondBrainPanel, PlacesPanel } from "dash-core";
+import { SearchPanel, SecondBrainPanel, PlacesPanel, JournalPanel, MealsPanel } from "dash-core";
 import { ClockPanel } from "./clock";
 import { VersePanel } from "./verse";
 import { TodoPanel } from "./todo";
 import { AgendaPanel } from "./agenda";
-import { JournalPanel } from "./journal";
-import { MealsPanel } from "./meals";
 import { CalendarPanel } from "./calendar";
 import {
 	FRIENDLY_SEARCH_COPY,
 	FRIENDLY_SECOND_BRAIN_COPY,
 	FRIENDLY_CATEGORY_COPY,
 	FRIENDLY_PLACES_COPY,
+	FRIENDLY_JOURNAL_COPY,
+	FRIENDLY_MEALS_COPY,
 } from "../copy";
 
 /** Registration order = default panel order. Everything ships enabled; the
@@ -54,8 +54,8 @@ export function createPanels(order: string[], enabled: Record<string, boolean>, 
 		verse: () => new VersePanel(),
 		todo: () => new TodoPanel(),
 		agenda: () => new AgendaPanel(),
-		journal: () => new JournalPanel(),
-		meals: () => new MealsPanel(),
+		journal: () => new JournalPanel(FRIENDLY_JOURNAL_COPY),
+		meals: () => new MealsPanel(FRIENDLY_MEALS_COPY),
 		search: () => new SearchPanel(plugin.knowledgeBase, FRIENDLY_SEARCH_COPY, FRIENDLY_CATEGORY_COPY),
 		calendar: () => new CalendarPanel(),
 		secondbrain: () => new SecondBrainPanel(plugin.secondBrain, FRIENDLY_SECOND_BRAIN_COPY),
