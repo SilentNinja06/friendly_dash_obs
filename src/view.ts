@@ -56,7 +56,7 @@ export class DashView extends ItemView {
 			copy: {},
 			settings: () => this.plugin.settings,
 			agendaCache: this.plugin.agendaCache,
-			localEvents: [],
+			localEvents: this.plugin.localEvents,
 			persist: () => this.plugin.saveData_(),
 			requestRefresh: (reason: RefreshReason = "manual") => void this.refreshPanels(reason),
 			markFoodFocus: () => {},

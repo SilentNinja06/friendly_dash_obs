@@ -25,6 +25,6 @@
 		"typescript": "^5.4.5"
 	},
 	"dependencies": {
-		"dash-core": "github:SilentNinja06/dash_core_obs#e4f8099a682b755a6e53658ba47b3748db1c7609"
+		"dash-core": "github:SilentNinja06/dash_core_obs#0ffbb097ec9603875345c84e72b9c744d8c0e779"
 	}
 }

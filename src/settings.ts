@@ -50,6 +50,9 @@ export interface DashSettings {
 	places: PlaceLink[];
 	/** Vault file the persistent to-do list lives in (Markdown, so it syncs). */
 	directivesPath: string;
+	/** Vault file the dashboard-only local events live in (Markdown, so they sync
+	 * across devices — same rationale as directivesPath). */
+	localEventsPath: string;
 	/** Where completed to-dos are archived in today's note. */
 	completedTasksMarker: string;
 	completedTasksHeading: string;
@@ -90,6 +93,7 @@ export const DEFAULT_SETTINGS: DashSettings = {
 		{ label: "Recipe index", target: "recipe-manager:recipe-index", type: "command" },
 	],
 	directivesPath: "Daily Dashboard/To-dos.md",
+	localEventsPath: "Daily Dashboard/Local Events.md",
 	completedTasksMarker: "",
 	completedTasksHeading: "Completed tasks",
 };
@@ -256,24 +260,50 @@ export class DashSettingTab extends PluginSettingTab {
 			);
 		new Setting(containerEl)
 			.setName("Calendar share links")
-			.setDesc("Up to 20 calendars. One per line, as `Label | https://…` (a public Proton Calendar / ICS share link). Today only — there is no month view.")
-			.addTextArea((t) => {
-				t.setValue(s.agendaUrls.map((c) => `${c.label} | ${c.url}`).join("\n"));
-				t.inputEl.rows = 8;
-				t.onChange(async (v) => {
-					s.agendaUrls = v
-						.split("\n")
-						.map((line) => line.trim())
-						.filter(Boolean)
-						.slice(0, 20)
-						.map((line) => {
-							const bar = line.indexOf("|");
-							if (bar === -1) return { label: "Calendar", url: line };
-							return { label: line.slice(0, bar).trim() || "Calendar", url: line.slice(bar + 1).trim() };
-						});
-					await this.save();
+			.setDesc("Up to 20 public Proton Calendar / ICS share links (.ics). Each has its own label, address, and a remove button. Today only — there is no month view.");
+		const calList = containerEl.createDiv({ cls: "dash-settings-cal-list" });
+		const renderCals = () => {
+			calList.empty();
+			s.agendaUrls.forEach((cal, i) => {
+				const row = new Setting(calList).setName(`Calendar ${i + 1}`);
+				row.addText((t) =>
+					t.setPlaceholder("Label").setValue(cal.label).onChange(async (v) => {
+						cal.label = v.trim() || "Calendar";
+						await this.save();
+					})
+				);
+				row.addText((t) => {
+					t.setPlaceholder("https://…/basic.ics").setValue(cal.url).onChange(async (v) => {
+						cal.url = v.trim();
+						await this.save();
+					});
+					t.inputEl.classList.add("dash-settings-cal-url");
 				});
+				row.addExtraButton((b) =>
+					b
+						.setIcon("trash")
+						.setTooltip("Remove this calendar")
+						.onClick(async () => {
+							s.agendaUrls.splice(i, 1);
+							await this.save();
+							renderCals();
+						})
+				);
 			});
+			const addRow = new Setting(calList);
+			addRow.addButton((b) =>
+				b
+					.setButtonText("+ Add calendar")
+					.setDisabled(s.agendaUrls.length >= 20)
+					.onClick(async () => {
+						if (s.agendaUrls.length >= 20) return;
+						s.agendaUrls.push({ label: "Calendar", url: "" });
+						await this.save();
+						renderCals();
+					})
+			);
+		};
+		renderCals();
 
 		// -------- search --------
 		new Setting(containerEl).setName("Search").setHeading();
@@ -344,6 +374,13 @@ export class DashSettingTab extends PluginSettingTab {
 			"The Markdown file your to-do list is saved in. Markdown always syncs via Obsidian Sync, so the list follows you across devices. Any extension you type becomes .md.",
 			s.directivesPath,
 			(v) => (s.directivesPath = v || "Daily Dashboard/To-dos.md")
+		);
+		this.addText(
+			containerEl,
+			"Local events file",
+			"The Markdown file your dashboard-only agenda events are saved in. Markdown always syncs via Obsidian Sync, so events you add on one device show up on the others. Any extension you type becomes .md.",
+			s.localEventsPath,
+			(v) => (s.localEventsPath = v || "Daily Dashboard/Local Events.md")
 		);
 		this.addText(containerEl, "Completed-tasks heading", "Completed to-dos are logged under this heading in today's note.", s.completedTasksHeading, (v) => (s.completedTasksHeading = v || "Completed tasks"));
 		this.addText(containerEl, "Completed-tasks marker", "Optional. If set, completed tasks go after this marker instead of the heading.", s.completedTasksMarker, (v) => (s.completedTasksMarker = v), true);

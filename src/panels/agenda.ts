@@ -1,7 +1,11 @@
 import { moment } from "obsidian";
 import { BasePanel, placard } from "./types";
-import { AgendaItem, eventsOnDate, fetchICS, parseICS } from "dash-core";
+import { AgendaItem, eventsOnDate, fetchICS, parseICS, LocalEvent, localEventToAgendaItem, LocalEventModal } from "dash-core";
 import { calendarColorVar } from "../core/themes";
+
+/** Swatch colour for local (dashboard-only) events, distinct from any calendar
+ * slot. Falls back to a warm accent if the theme doesn't define the token. */
+const LOCAL_EVENT_COLOR = "var(--dash-cal-local, var(--dash-accent, #b5836b))";
 
 /**
  * Today's agenda (§5.3). Today only — no month view. Up to 20 calendars, fetched
@@ -42,20 +46,27 @@ export class AgendaPanel extends BasePanel {
 		head.createSpan({ cls: "dash-placard-badge", text: moment().format("ddd, MMM D") });
 
 		const toolbar = this.el.createDiv({ cls: "dash-agenda-toolbar" });
+		const addBtn = toolbar.createEl("button", { cls: "dash-btn", text: "＋ Add event" });
+		addBtn.setAttr("title", "Add a one-off event to today's agenda (stored on the dashboard, synced across devices)");
+		addBtn.addEventListener("click", () =>
+			new LocalEventModal(this.ctx.app, this.ctx.plugin.localEventsStore, undefined, () => this.rerender()).open()
+		);
 		const printBtn = toolbar.createEl("button", { cls: "dash-btn", text: "🖨 Print week" });
 		printBtn.setAttr("title", "Open a printable week-at-a-glance planner for this week");
 		printBtn.addEventListener("click", () => this.printWeek());
 
-		if (s.agendaUrls.length === 0) {
+		const today = moment().format("YYYY-MM-DD");
+		const localToday = this.ctx.localEvents.filter((e) => e.date === today);
+
+		if (s.agendaUrls.length === 0 && localToday.length === 0) {
 			this.el.createDiv({
 				cls: "dash-empty",
-				text: "No calendars yet. Add your calendar share links in the plugin settings (Settings → Daily Dashboard → Today's agenda) and today's events will appear here.",
+				text: "Nothing scheduled yet. Add your calendar share links in the plugin settings (Settings → Daily Dashboard → Today's agenda), or tap “＋ Add event” to jot a one-off onto today.",
 			});
 			return;
 		}
 
-		const today = moment().format("YYYY-MM-DD");
-		const rows: Array<{ item: AgendaItem; colorIndex: number; label: string }> = [];
+		const rows: Array<{ item: AgendaItem; color: string; label: string; local?: LocalEvent }> = [];
 		let anyCache = false;
 		let oldest = Infinity;
 
@@ -66,13 +77,18 @@ export class AgendaPanel extends BasePanel {
 				oldest = Math.min(oldest, cache.fetchedAt);
 				try {
 					for (const item of eventsOnDate(parseICS(cache.text), today)) {
-						rows.push({ item, colorIndex: i, label: cal.label });
+						rows.push({ item, color: calendarColorVar(i), label: cal.label });
 					}
 				} catch {
 					this.errors.set(cal.url, "couldn't be read");
 				}
 			}
 		});
+
+		// Local (dashboard-only) events feed the same sorted list.
+		for (const ev of localToday) {
+			rows.push({ item: localEventToAgendaItem(ev), color: LOCAL_EVENT_COLOR, label: "Event", local: ev });
+		}
 
 		// Failure notices — always visible, in plain language, per calendar.
 		const failed = s.agendaUrls.filter((c) => this.errors.has(c.url));
@@ -114,13 +130,23 @@ export class AgendaPanel extends BasePanel {
 			}
 			const row = list.createDiv({ cls: "dash-agenda-row" });
 			const swatch = row.createSpan({ cls: "dash-agenda-swatch" });
-			swatch.style.background = calendarColorVar(r.colorIndex);
+			swatch.style.background = r.color;
 			const time = row.createSpan({ cls: "dash-agenda-time" });
 			time.setText(r.item.allDay ? "all day" : r.item.timeLabel);
 			const body = row.createDiv({ cls: "dash-agenda-body" });
-			body.createDiv({ cls: "dash-agenda-title", text: r.item.summary });
-			const sub = [r.label, r.item.location].filter(Boolean).join(" · ");
+			const title = body.createDiv({ cls: "dash-agenda-title", text: r.item.summary });
+			if (r.local) title.createSpan({ cls: "dash-chip dash-agenda-local-chip", text: r.label });
+			const sub = [r.local ? "" : r.label, r.item.location].filter(Boolean).join(" · ");
 			if (sub) body.createDiv({ cls: "dash-agenda-sub", text: sub });
+			// Local events are editable/deletable in place; calendar events are read-only.
+			if (r.local) {
+				const ev = r.local;
+				row.classList.add("dash-agenda-row-editable");
+				row.setAttr("title", "Edit or delete this event");
+				row.addEventListener("click", () =>
+					new LocalEventModal(this.ctx.app, this.ctx.plugin.localEventsStore, ev, () => this.rerender()).open()
+				);
+			}
 		}
 		// If every remaining event is already past, the "now" line goes at the end.
 		if (!markerPlaced && rows.some((r) => !r.item.allDay)) {
@@ -260,7 +286,10 @@ export class AgendaPanel extends BasePanel {
 				}
 			}
 			items.sort((a, b) => a.item.sortKey - b.item.sortKey || a.item.summary.localeCompare(b.item.summary));
-			days.push({ date, items });
+			// Opt-in to-dos (Show on the printed week) for this day, as blank
+			// checkboxes to tick off on paper.
+			const todos = this.ctx.todos.itemsForWeekPrint(dateStr).map((t) => t.text);
+			days.push({ date, items, todos });
 		}
 
 		const legend = calendars.map((c) => ({ label: c.label, color: c.color }));
@@ -276,6 +305,7 @@ interface PrintItem {
 interface PrintDay {
 	date: Date;
 	items: PrintItem[];
+	todos: string[];
 }
 
 function humanizeFetchError(e: unknown): string {
@@ -342,12 +372,18 @@ function buildWeekHtml(days: PrintDay[], legend: Legend[], weekStart: Date): str
 					</div>`;
 				})
 				.join("");
+			const todos = day.todos.length
+				? `<div class="todos">${day.todos
+						.map((t) => `<div class="todo"><span class="todo-box"></span><span class="todo-text">${escapeHtml(t)}</span></div>`)
+						.join("")}</div>`
+				: "";
 			return `<section class="day">
 				<header class="day-h">
 					<span class="day-name">${moment(day.date).format("dddd")}</span>
 					<span class="day-date">${moment(day.date).format("MMM D")}</span>
 				</header>
 				<div class="events">${events}</div>
+				${todos}
 				<div class="write"></div>
 			</section>`;
 		})
@@ -386,6 +422,10 @@ function buildWeekHtml(days: PrintDay[], legend: Legend[], weekStart: Date): str
 	.evt-time { flex: 0 0 auto; color: #333; font-variant-numeric: tabular-nums; min-width: 66px; }
 	.evt-title { font-weight: 600; }
 	.evt-cal { display: block; font-weight: 400; color: #777; font-size: 10px; }
+	.todos { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 4px; padding-top: 3px; border-top: 1px dashed #ddd; }
+	.todo { display: flex; align-items: baseline; gap: 6px; font-size: 11px; }
+	.todo-box { flex: 0 0 auto; width: 9px; height: 9px; border: 1px solid #888; border-radius: 2px; align-self: center; }
+	.todo-text { font-weight: 500; }
 	.write { flex: 1 1 auto; min-height: 22mm; background-image: repeating-linear-gradient(to bottom, transparent, transparent 6mm, #e2e2e2 6mm, #e2e2e2 calc(6mm + 1px)); }
 	.write.tall { min-height: 48mm; }
 	@media print { body { padding: 0; } @page { margin: 12mm; } }

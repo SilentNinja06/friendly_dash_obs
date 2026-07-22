@@ -9,6 +9,9 @@ import {
 import { Bridge } from "./core/bridge";
 import { TodoStore } from "dash-core";
 import { DirectivesStore } from "dash-core";
+import { LocalEventsFileStore } from "dash-core";
+import { LocalEvent } from "dash-core";
+import { LocalEventModal } from "dash-core";
 import { LibraryStore } from "dash-core";
 import { DashRuntime, RefreshReason } from "./panels/types";
 import { DashView, VIEW_TYPE_DASH } from "./view";
@@ -18,6 +21,7 @@ export default class DailyDashPlugin extends Plugin {
 	bridge!: Bridge;
 	todos!: TodoStore;
 	directives!: DirectivesStore;
+	localEventsStore!: LocalEventsFileStore;
 	secondBrain!: LibraryStore;
 	knowledgeBase!: LibraryStore;
 	runtime: DashRuntime = { sessionStart: Date.now(), previousAccess: 0, typingUntil: 0, textFocused: false };
@@ -52,6 +56,9 @@ export default class DailyDashPlugin extends Plugin {
 				"automatically; add and edit your to-dos in the dashboard, not here. %%",
 			defaultPath: "Daily Dashboard/To-dos.md",
 		});
+		this.localEventsStore = new LocalEventsFileStore(this.app, () => this.settings.localEventsPath, {
+			defaultPath: "Daily Dashboard/Local Events.md",
+		});
 		this.todos = new TodoStore(
 			this.app,
 			() => this.directives.getItems(),
@@ -72,6 +79,12 @@ export default class DailyDashPlugin extends Plugin {
 			name: "Open dashboard",
 			callback: () => void this.openDashboard(),
 		});
+		this.addCommand({
+			id: "add-event",
+			name: "Add an event to today's agenda",
+			callback: () =>
+				new LocalEventModal(this.app, this.localEventsStore, undefined, () => this.refreshOpenViews("vault")).open(),
+		});
 		this.addSettingTab(new DashSettingTab(this.app, this));
 
 		// Refresh bus source: vault/metadata changes, debounced ~300ms.
@@ -91,7 +104,9 @@ export default class DailyDashPlugin extends Plugin {
 			// loaded, rebuild any open view so its panel set matches the saved
 			// show/hide state.
 			this.rebuildOpenViews();
-			void this.loadDirectives().then(() => this.refreshOpenViews("vault"));
+			void Promise.all([this.loadDirectives(), this.localEventsStore.load()]).then(() =>
+				this.refreshOpenViews("vault")
+			);
 			this.registerEvent(
 				this.app.workspace.on("active-leaf-change", (leaf) => this.maybeReplaceEmptyLeaf(leaf))
 			);
@@ -156,6 +171,12 @@ export default class DailyDashPlugin extends Plugin {
 			});
 			return;
 		}
+		if (this.localEventsStore.isLocalEventsPath(path)) {
+			void this.localEventsStore.onExternalChange(path).then((changed) => {
+				if (changed) this.refreshOpenViews("vault");
+			});
+			return;
+		}
 		this.scheduleRefresh();
 	}
 
@@ -166,6 +187,11 @@ export default class DailyDashPlugin extends Plugin {
 
 	get agendaCache(): Record<string, { text: string; fetchedAt: number }> {
 		return this.data.agendaCache;
+	}
+
+	/** The dashboard-only local events, read live from the synced Markdown file. */
+	get localEvents(): LocalEvent[] {
+		return this.localEventsStore.getEvents();
 	}
 
 	// ------------------------------------------------------------- view
