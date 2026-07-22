@@ -2,9 +2,9 @@ import { App, moment } from "obsidian";
 import { appendDailyLogLine } from "./dailynote";
 
 /**
- * Persistent to-do + recurrence engine. The store is authoritative; nothing
- * resets overnight. Completing an item appends a `- HH:MM <text>` line under the
- * completed-tasks heading in today's note as a one-way archive — the note is
+ * Persistent to-do + recurrence engine. The store is authoritative;
+ * nothing resets overnight. Completing an item appends a `- HH:MM <text>` line
+ * under `# Completed tasks` in today's note as a one-way archive — the note is
  * never re-read as state.
  *
  * Overdue policy:
@@ -31,6 +31,15 @@ export interface Recurrence {
 	n?: number;
 }
 
+/** A single sub-task under a to-do. For non-recurring parents `done`
+ * is the flat, global state; for recurring parents per-occurrence state lives in
+ * `TodoItem.subCompletions` and `done` is ignored — resolve via `subItemDone`. */
+export interface SubItem {
+	id: string;
+	text: string;
+	done: boolean;
+}
+
 export interface TodoItem {
 	id: string;
 	text: string;
@@ -42,12 +51,27 @@ export interface TodoItem {
 	scheduledDate?: string;
 	/** Optional time-of-day the item appears on its date (HH:mm). */
 	scheduledTime?: string;
+	/** Optional soft deadline (YYYY-MM-DD). Shown as a chip; past-due, undone
+	 * items read "overdue". Independent of `scheduledDate` (the appear-on date). */
+	dueDate?: string;
+	/** Whether this to-do is drawn on the printed week-at-a-glance planner on
+	 * its occurrence / scheduled / due days. Opt-in (default off). */
+	showOnWeekPrint?: boolean;
 	// --- non-recurring completion ---
 	completed?: boolean;
 	completedDate?: string;
 	// --- recurring per-date state ---
 	completions?: string[];
 	skips?: string[];
+	// --- sub-items + note ---
+	/** Optional single muted note line under the to-do text. */
+	note?: string;
+	/** Collapsible checklist of sub-tasks. */
+	subItems?: SubItem[];
+	/** Per-occurrence sub-item completion for recurring parents, keyed by date —
+	 * mirrors how `completions`/`skips` key by date so Monday's checked sub-items
+	 * don't show checked again next Monday. Non-recurring items use `SubItem.done`. */
+	subCompletions?: Record<string /*YYYY-MM-DD*/, string[] /*subItem ids done that day*/>;
 }
 
 export interface TodoInstance {
@@ -55,7 +79,7 @@ export interface TodoInstance {
 	/** True when this instance carries a slip flag (carried over / missed last time). */
 	flagged: boolean;
 	flagLabel: string;
-	/** True when done for the reference day. */
+	/** True when done for the reference day (non-recurring completed, or today in completions). */
 	done: boolean;
 	/** True when this recurring occurrence was postponed (skipped) for the day. */
 	skipped: boolean;
@@ -239,9 +263,46 @@ export class TodoStore {
 		return out;
 	}
 
+	/** To-dos to draw on the printed week planner for `date`: opt-in items
+	 * that occur on that date (recurring), or whose scheduled/due date is that day
+	 * (one-time). Ignores time-of-day hiding and completion — the planner is a
+	 * blank-space paper artifact, not the live list. */
+	itemsForWeekPrint(date: string): TodoItem[] {
+		const out: TodoItem[] = [];
+		for (const item of this.all()) {
+			if (!item.showOnWeekPrint) continue;
+			if (this.isRecurring(item)) {
+				if (this.isOccurrence(item, date)) out.push(item);
+			} else if (item.scheduledDate === date || item.dueDate === date) {
+				out.push(item);
+			}
+		}
+		return out;
+	}
+
+	/** Count of slipped items for overdue-based weighting. */
+	overdueCount(date = todayStr()): number {
+		return this.instancesFor(date).filter((i) => i.flagged && !i.done).length;
+	}
+
 	/** Count of pending (undone, un-postponed, eligible) items today. */
 	pendingCount(date = todayStr()): number {
 		return this.instancesFor(date).filter((i) => !i.done && !i.skipped).length;
+	}
+
+	/** The top pending instance for `date` in the same order the panel shows —
+	 * flagged (slipped) first, then by scheduled time, then stored order. Used by
+	 * the `complete-next-to-do` command. */
+	firstPending(date = todayStr()): TodoInstance | null {
+		const active = this.instancesFor(date).filter((i) => !i.done && !i.skipped);
+		active.sort((a, b) => {
+			if (a.flagged !== b.flagged) return a.flagged ? -1 : 1;
+			const at = a.item.scheduledTime ?? "99:99";
+			const bt = b.item.scheduledTime ?? "99:99";
+			if (at !== bt) return at.localeCompare(bt);
+			return a.item.order - b.item.order;
+		});
+		return active[0] ?? null;
 	}
 
 	// ----------------------------------------------------------- mutations
@@ -257,6 +318,8 @@ export class TodoStore {
 			order: maxOrder + 1,
 			scheduledDate: partial.scheduledDate,
 			scheduledTime: partial.scheduledTime,
+			dueDate: partial.dueDate,
+			showOnWeekPrint: partial.showOnWeekPrint,
 			completions: [],
 			skips: [],
 		};
@@ -277,6 +340,69 @@ export class TodoStore {
 	/** First-class removal — deletes the item and all its recurrence. */
 	async remove(id: string): Promise<void> {
 		this.setItems(this.getItems().filter((i) => i.id !== id));
+		await this.save();
+	}
+
+	// ------------------------------------------------- sub-items + note
+
+	/** Add a sub-task to a to-do. */
+	async addSubItem(parentId: string, text: string): Promise<void> {
+		const trimmed = text.trim();
+		if (!trimmed) return;
+		const items = this.getItems();
+		const item = items.find((i) => i.id === parentId);
+		if (!item) return;
+		(item.subItems ?? (item.subItems = [])).push({ id: cryptoId(), text: trimmed, done: false });
+		this.setItems(items);
+		await this.save();
+	}
+
+	/** Remove a sub-task, and forget its per-occurrence completion state. */
+	async removeSubItem(parentId: string, subId: string): Promise<void> {
+		const items = this.getItems();
+		const item = items.find((i) => i.id === parentId);
+		if (!item) return;
+		item.subItems = (item.subItems ?? []).filter((s) => s.id !== subId);
+		if (item.subCompletions) {
+			for (const date of Object.keys(item.subCompletions)) {
+				item.subCompletions[date] = item.subCompletions[date].filter((id) => id !== subId);
+				if (item.subCompletions[date].length === 0) delete item.subCompletions[date];
+			}
+		}
+		this.setItems(items);
+		await this.save();
+	}
+
+	/** Toggle a sub-task's done state for `date`. Recurring parents key the state
+	 * by date; non-recurring parents use the flat `SubItem.done`. */
+	async toggleSubItem(parentId: string, subId: string, date = todayStr()): Promise<void> {
+		const items = this.getItems();
+		const item = items.find((i) => i.id === parentId);
+		if (!item) return;
+		const sub = (item.subItems ?? []).find((s) => s.id === subId);
+		if (!sub) return;
+		if (this.isRecurring(item)) {
+			const map = item.subCompletions ?? (item.subCompletions = {});
+			const set = new Set(map[date] ?? []);
+			if (set.has(subId)) set.delete(subId);
+			else set.add(subId);
+			if (set.size === 0) delete map[date];
+			else map[date] = [...set];
+		} else {
+			sub.done = !sub.done;
+		}
+		this.setItems(items);
+		await this.save();
+	}
+
+	/** Set (or clear) the to-do's single note line. */
+	async setNote(id: string, text: string): Promise<void> {
+		const items = this.getItems();
+		const item = items.find((i) => i.id === id);
+		if (!item) return;
+		const trimmed = text.trim();
+		item.note = trimmed || undefined;
+		this.setItems(items);
 		await this.save();
 	}
 
@@ -303,6 +429,7 @@ export class TodoStore {
 				set.delete(date);
 			} else {
 				set.add(date);
+				(item.skips ?? (item.skips = [])); // ensure array
 				item.skips = (item.skips ?? []).filter((d) => d !== date);
 				didComplete = true;
 			}
@@ -366,7 +493,7 @@ export class TodoStore {
 			await appendDailyLogLine(this.app, `- ${time} ${item.text}`, { marker, heading, time });
 		} catch (e) {
 			// The archive is a convenience; never let it block completion state.
-			console.error("Daily Dashboard: could not archive completed task", e);
+			console.error("dash-core: could not archive completed task", e);
 		}
 	}
 }
@@ -378,8 +505,11 @@ function missedLabel(prev: string | null, date: string): string {
 	return `missed ${moment(prev, "YYYY-MM-DD").format("MMM D")}`;
 }
 
-function cryptoId(): string {
-	// crypto.randomUUID exists in Obsidian's Electron/mobile webviews; fall back.
+/** A collision-resistant id for to-dos and sub-items. Uses
+ * `crypto.randomUUID` where available (Obsidian's Electron/mobile webviews),
+ * with a timestamp-based fallback. Exported so hosts that seed their own
+ * starter to-dos can mint ids the same way. */
+export function cryptoId(): string {
 	const c = (globalThis as unknown as { crypto?: Crypto }).crypto;
 	if (c?.randomUUID) return c.randomUUID();
 	return "t-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);

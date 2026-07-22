@@ -260,24 +260,50 @@ export class DashSettingTab extends PluginSettingTab {
 			);
 		new Setting(containerEl)
 			.setName("Calendar share links")
-			.setDesc("Up to 20 calendars. One per line, as `Label | https://…` (a public Proton Calendar / ICS share link). Today only — there is no month view.")
-			.addTextArea((t) => {
-				t.setValue(s.agendaUrls.map((c) => `${c.label} | ${c.url}`).join("\n"));
-				t.inputEl.rows = 8;
-				t.onChange(async (v) => {
-					s.agendaUrls = v
-						.split("\n")
-						.map((line) => line.trim())
-						.filter(Boolean)
-						.slice(0, 20)
-						.map((line) => {
-							const bar = line.indexOf("|");
-							if (bar === -1) return { label: "Calendar", url: line };
-							return { label: line.slice(0, bar).trim() || "Calendar", url: line.slice(bar + 1).trim() };
-						});
-					await this.save();
+			.setDesc("Up to 20 public Proton Calendar / ICS share links (.ics). Each has its own label, address, and a remove button. Today only — there is no month view.");
+		const calList = containerEl.createDiv({ cls: "dash-settings-cal-list" });
+		const renderCals = () => {
+			calList.empty();
+			s.agendaUrls.forEach((cal, i) => {
+				const row = new Setting(calList).setName(`Calendar ${i + 1}`);
+				row.addText((t) =>
+					t.setPlaceholder("Label").setValue(cal.label).onChange(async (v) => {
+						cal.label = v.trim() || "Calendar";
+						await this.save();
+					})
+				);
+				row.addText((t) => {
+					t.setPlaceholder("https://…/basic.ics").setValue(cal.url).onChange(async (v) => {
+						cal.url = v.trim();
+						await this.save();
+					});
+					t.inputEl.classList.add("dash-settings-cal-url");
 				});
+				row.addExtraButton((b) =>
+					b
+						.setIcon("trash")
+						.setTooltip("Remove this calendar")
+						.onClick(async () => {
+							s.agendaUrls.splice(i, 1);
+							await this.save();
+							renderCals();
+						})
+				);
 			});
+			const addRow = new Setting(calList);
+			addRow.addButton((b) =>
+				b
+					.setButtonText("+ Add calendar")
+					.setDisabled(s.agendaUrls.length >= 20)
+					.onClick(async () => {
+						if (s.agendaUrls.length >= 20) return;
+						s.agendaUrls.push({ label: "Calendar", url: "" });
+						await this.save();
+						renderCals();
+					})
+			);
+		};
+		renderCals();
 
 		// -------- search --------
 		new Setting(containerEl).setName("Search").setHeading();

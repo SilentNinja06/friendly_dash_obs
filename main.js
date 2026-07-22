@@ -531,9 +531,45 @@ var TodoStore = class {
     }
     return out;
   }
+  /** To-dos to draw on the printed week planner for `date`: opt-in items
+   * that occur on that date (recurring), or whose scheduled/due date is that day
+   * (one-time). Ignores time-of-day hiding and completion — the planner is a
+   * blank-space paper artifact, not the live list. */
+  itemsForWeekPrint(date) {
+    const out = [];
+    for (const item of this.all()) {
+      if (!item.showOnWeekPrint) continue;
+      if (this.isRecurring(item)) {
+        if (this.isOccurrence(item, date)) out.push(item);
+      } else if (item.scheduledDate === date || item.dueDate === date) {
+        out.push(item);
+      }
+    }
+    return out;
+  }
+  /** Count of slipped items for overdue-based weighting. */
+  overdueCount(date = todayStr()) {
+    return this.instancesFor(date).filter((i) => i.flagged && !i.done).length;
+  }
   /** Count of pending (undone, un-postponed, eligible) items today. */
   pendingCount(date = todayStr()) {
     return this.instancesFor(date).filter((i) => !i.done && !i.skipped).length;
+  }
+  /** The top pending instance for `date` in the same order the panel shows —
+   * flagged (slipped) first, then by scheduled time, then stored order. Used by
+   * the `complete-next-to-do` command. */
+  firstPending(date = todayStr()) {
+    var _a;
+    const active = this.instancesFor(date).filter((i) => !i.done && !i.skipped);
+    active.sort((a, b) => {
+      var _a2, _b;
+      if (a.flagged !== b.flagged) return a.flagged ? -1 : 1;
+      const at = (_a2 = a.item.scheduledTime) != null ? _a2 : "99:99";
+      const bt = (_b = b.item.scheduledTime) != null ? _b : "99:99";
+      if (at !== bt) return at.localeCompare(bt);
+      return a.item.order - b.item.order;
+    });
+    return (_a = active[0]) != null ? _a : null;
   }
   // ----------------------------------------------------------- mutations
   async add(partial) {
@@ -548,6 +584,8 @@ var TodoStore = class {
       order: maxOrder + 1,
       scheduledDate: partial.scheduledDate,
       scheduledTime: partial.scheduledTime,
+      dueDate: partial.dueDate,
+      showOnWeekPrint: partial.showOnWeekPrint,
       completions: [],
       skips: []
     };
@@ -568,6 +606,67 @@ var TodoStore = class {
     this.setItems(this.getItems().filter((i) => i.id !== id));
     await this.save();
   }
+  // ------------------------------------------------- sub-items + note
+  /** Add a sub-task to a to-do. */
+  async addSubItem(parentId, text) {
+    var _a;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const items = this.getItems();
+    const item = items.find((i) => i.id === parentId);
+    if (!item) return;
+    ((_a = item.subItems) != null ? _a : item.subItems = []).push({ id: cryptoId(), text: trimmed, done: false });
+    this.setItems(items);
+    await this.save();
+  }
+  /** Remove a sub-task, and forget its per-occurrence completion state. */
+  async removeSubItem(parentId, subId) {
+    var _a;
+    const items = this.getItems();
+    const item = items.find((i) => i.id === parentId);
+    if (!item) return;
+    item.subItems = ((_a = item.subItems) != null ? _a : []).filter((s) => s.id !== subId);
+    if (item.subCompletions) {
+      for (const date of Object.keys(item.subCompletions)) {
+        item.subCompletions[date] = item.subCompletions[date].filter((id) => id !== subId);
+        if (item.subCompletions[date].length === 0) delete item.subCompletions[date];
+      }
+    }
+    this.setItems(items);
+    await this.save();
+  }
+  /** Toggle a sub-task's done state for `date`. Recurring parents key the state
+   * by date; non-recurring parents use the flat `SubItem.done`. */
+  async toggleSubItem(parentId, subId, date = todayStr()) {
+    var _a, _b, _c;
+    const items = this.getItems();
+    const item = items.find((i) => i.id === parentId);
+    if (!item) return;
+    const sub = ((_a = item.subItems) != null ? _a : []).find((s) => s.id === subId);
+    if (!sub) return;
+    if (this.isRecurring(item)) {
+      const map = (_b = item.subCompletions) != null ? _b : item.subCompletions = {};
+      const set = new Set((_c = map[date]) != null ? _c : []);
+      if (set.has(subId)) set.delete(subId);
+      else set.add(subId);
+      if (set.size === 0) delete map[date];
+      else map[date] = [...set];
+    } else {
+      sub.done = !sub.done;
+    }
+    this.setItems(items);
+    await this.save();
+  }
+  /** Set (or clear) the to-do's single note line. */
+  async setNote(id, text) {
+    const items = this.getItems();
+    const item = items.find((i) => i.id === id);
+    if (!item) return;
+    const trimmed = text.trim();
+    item.note = trimmed || void 0;
+    this.setItems(items);
+    await this.save();
+  }
   async reorder(orderedIds) {
     const items = this.getItems();
     orderedIds.forEach((id, idx) => {
@@ -580,7 +679,7 @@ var TodoStore = class {
   /** Toggle completion for `date` (default today). Appends the archive line on
    * the transition into completed; un-completing does not touch the note. */
   async toggleComplete(id, date = todayStr()) {
-    var _a, _b;
+    var _a, _b, _c;
     const items = this.getItems();
     const item = items.find((i) => i.id === id);
     if (!item) return;
@@ -591,7 +690,8 @@ var TodoStore = class {
         set.delete(date);
       } else {
         set.add(date);
-        item.skips = ((_b = item.skips) != null ? _b : []).filter((d) => d !== date);
+        (_b = item.skips) != null ? _b : item.skips = [];
+        item.skips = ((_c = item.skips) != null ? _c : []).filter((d) => d !== date);
         didComplete = true;
       }
       item.completions = [...set];
@@ -649,7 +749,7 @@ var TodoStore = class {
     try {
       await appendDailyLogLine(this.app, `- ${time} ${item.text}`, { marker, heading, time });
     } catch (e) {
-      console.error("Daily Dashboard: could not archive completed task", e);
+      console.error("dash-core: could not archive completed task", e);
     }
   }
 };
@@ -665,12 +765,36 @@ function cryptoId() {
   return "t-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
 }
 
+// src/core/subitems.ts
+function isRecurringItem(item) {
+  return item.recurrence.type !== "none";
+}
+function subItemDone(item, subId, date) {
+  var _a, _b, _c, _d;
+  if (isRecurringItem(item)) {
+    return ((_b = (_a = item.subCompletions) == null ? void 0 : _a[date]) != null ? _b : []).includes(subId);
+  }
+  return !!((_d = (_c = item.subItems) == null ? void 0 : _c.find((s) => s.id === subId)) == null ? void 0 : _d.done);
+}
+function subItemsDoneCount(item, date) {
+  var _a;
+  const subs = (_a = item.subItems) != null ? _a : [];
+  return subs.filter((s) => subItemDone(item, s.id, date)).length;
+}
+function allSubItemsDone(item, date) {
+  var _a;
+  const subs = (_a = item.subItems) != null ? _a : [];
+  return subs.length > 0 && subs.every((s) => subItemDone(item, s.id, date));
+}
+
 // src/panels/todo.ts
 var TodoPanel = class extends BasePanel {
   constructor() {
     super(...arguments);
     this.id = "todo";
     this.title = "To-do";
+    /** Which rows are expanded to show their sub-tasks / note — survives re-render. */
+    this.expanded = /* @__PURE__ */ new Set();
   }
   renderBody() {
     const store = this.ctx.todos;
@@ -709,9 +833,12 @@ var TodoPanel = class extends BasePanel {
     }
   }
   renderRow(parent, inst, idx, count) {
+    var _a;
     const store = this.ctx.todos;
     const item = inst.item;
-    const row = parent.createDiv({ cls: "dash-todo-row" });
+    const today2 = (0, import_obsidian4.moment)().format("YYYY-MM-DD");
+    const wrap = parent.createDiv({ cls: "dash-todo-item" });
+    const row = wrap.createDiv({ cls: "dash-todo-row" });
     if (inst.flagged) row.addClass("is-flagged");
     if (inst.done || inst.skipped) row.addClass("is-done");
     const box = row.createEl("button", { cls: "dash-todo-check", attr: { "aria-label": inst.done ? "Mark not done" : "Mark done" } });
@@ -725,8 +852,26 @@ var TodoPanel = class extends BasePanel {
     const meta = main.createDiv({ cls: "dash-todo-meta" });
     if (item.recurrence.type !== "none") meta.createSpan({ cls: "dash-chip dash-chip-cold", text: describeRecurrence(item.recurrence) });
     if (item.scheduledTime) meta.createSpan({ cls: "dash-chip", text: item.scheduledTime });
+    if (item.dueDate) {
+      const overdue = !inst.done && item.dueDate < today2;
+      meta.createSpan({ cls: overdue ? "dash-chip dash-chip-warn" : "dash-chip", text: dueLabel(item.dueDate, today2) });
+    }
+    if (item.showOnWeekPrint) meta.createSpan({ cls: "dash-chip dash-chip-cold", text: "on planner" });
     if (inst.flagged) meta.createSpan({ cls: "dash-chip dash-chip-warn", text: inst.flagLabel });
+    const subs = (_a = item.subItems) != null ? _a : [];
+    if (subs.length > 0) {
+      const doneN = subItemsDoneCount(item, today2);
+      const chip = meta.createSpan({ cls: "dash-chip dash-chip-cold", text: `sub-tasks ${doneN}/${subs.length}` });
+      if (allSubItemsDone(item, today2)) chip.addClass("dash-chip-warn");
+    }
     const actions = row.createDiv({ cls: "dash-todo-actions" });
+    const hasDetail = subs.length > 0 || !!item.note;
+    const isOpen = this.expanded.has(item.id);
+    this.iconBtn(actions, isOpen ? "\u25BE" : "\u25B8", hasDetail ? "Sub-tasks & note" : "Add sub-tasks or a note", false, () => {
+      if (isOpen) this.expanded.delete(item.id);
+      else this.expanded.add(item.id);
+      this.rerender();
+    });
     if (!inst.done && count > 1 && idx >= 0) {
       this.iconBtn(actions, "\u2191", "Move up", idx === 0, async () => {
         await this.move(idx, -1);
@@ -754,6 +899,71 @@ var TodoPanel = class extends BasePanel {
       await store.remove(item.id);
       this.after();
     });
+    if (isOpen) this.renderDetail(wrap, inst, today2);
+  }
+  /** Expanded region under a row: an inline note line and the sub-task checklist,
+   * with per-occurrence completion for repeating to-dos. */
+  renderDetail(wrap, inst, today2) {
+    var _a, _b;
+    const store = this.ctx.todos;
+    const item = inst.item;
+    const detail = wrap.createDiv({ cls: "dash-todo-detail" });
+    const noteInput = detail.createEl("input", {
+      cls: "dash-todo-note-input",
+      attr: { type: "text", placeholder: "Add a note\u2026", value: (_a = item.note) != null ? _a : "" }
+    });
+    this.bindTextFocus(noteInput);
+    const saveNote = () => {
+      var _a2;
+      if (((_a2 = item.note) != null ? _a2 : "") === noteInput.value.trim()) return;
+      void store.setNote(item.id, noteInput.value).then(() => this.after());
+    };
+    noteInput.addEventListener("blur", saveNote);
+    noteInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        noteInput.blur();
+      }
+    });
+    const subList = detail.createDiv({ cls: "dash-subtask-list" });
+    for (const sub of (_b = item.subItems) != null ? _b : []) {
+      const srow = subList.createDiv({ cls: "dash-subtask-row" });
+      const done = subItemDone(item, sub.id, today2);
+      if (done) srow.addClass("is-done");
+      const cb = srow.createEl("button", {
+        cls: "dash-subtask-check",
+        attr: { "aria-label": done ? "Mark sub-task not done" : "Mark sub-task done" }
+      });
+      cb.setText(done ? "\u2713" : "");
+      cb.addEventListener("click", async () => {
+        await store.toggleSubItem(item.id, sub.id, today2);
+        this.after();
+      });
+      srow.createSpan({ cls: "dash-subtask-text", text: sub.text });
+      this.iconBtn(srow, "\u{1F5D1}", "Remove sub-task", false, async () => {
+        await store.removeSubItem(item.id, sub.id);
+        this.after();
+      });
+    }
+    const addRow = detail.createDiv({ cls: "dash-subtask-add" });
+    const addInput = addRow.createEl("input", {
+      cls: "dash-subtask-input",
+      attr: { type: "text", placeholder: "Add a sub-task\u2026" }
+    });
+    this.bindTextFocus(addInput);
+    const addSub = () => {
+      const text = addInput.value.trim();
+      if (!text) return;
+      void store.addSubItem(item.id, text).then(() => this.after());
+    };
+    addInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addSub();
+      }
+    });
+    const addBtn = addRow.createEl("button", { cls: "dash-btn dash-btn-sm", text: "Add" });
+    addBtn.addEventListener("click", addSub);
   }
   iconBtn(parent, glyph, label, disabled, onClick) {
     const b = parent.createEl("button", { cls: "dash-icon-btn dash-todo-icon", text: glyph, attr: { "aria-label": label, title: label } });
@@ -773,6 +983,11 @@ var TodoPanel = class extends BasePanel {
     this.ctx.requestRefresh("manual");
   }
 };
+function dueLabel(due, today2) {
+  if (due < today2) return `overdue \xB7 ${(0, import_obsidian4.moment)(due, "YYYY-MM-DD").format("MMM D")}`;
+  if (due === today2) return "due today";
+  return `due ${(0, import_obsidian4.moment)(due, "YYYY-MM-DD").format("MMM D")}`;
+}
 function activeSort(a, b) {
   var _a, _b;
   if (a.flagged !== b.flagged) return a.flagged ? -1 : 1;
@@ -792,7 +1007,7 @@ var WEEKDAYS = [
 ];
 var TodoEditModal = class extends import_obsidian4.Modal {
   constructor(app, store, existing, onDone) {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     super(app);
     this.store = store;
     this.existing = existing;
@@ -805,6 +1020,8 @@ var TodoEditModal = class extends import_obsidian4.Modal {
     this.everyN = (_e = e == null ? void 0 : e.recurrence.n) != null ? _e : 2;
     this.scheduledDate = (_f = e == null ? void 0 : e.scheduledDate) != null ? _f : "";
     this.scheduledTime = (_g = e == null ? void 0 : e.scheduledTime) != null ? _g : "";
+    this.dueDate = (_h = e == null ? void 0 : e.dueDate) != null ? _h : "";
+    this.showOnWeekPrint = (_i = e == null ? void 0 : e.showOnWeekPrint) != null ? _i : false;
   }
   onOpen() {
     this.titleEl.setText(this.existing ? "Edit to-do" : "New to-do");
@@ -844,6 +1061,11 @@ var TodoEditModal = class extends import_obsidian4.Modal {
       t.inputEl.type = "time";
       t.setValue(this.scheduledTime).onChange((v) => this.scheduledTime = v);
     });
+    new import_obsidian4.Setting(contentEl).setName("Due by").setDesc("Optional soft deadline. Shown as a chip; once it's past, it reads \u201Coverdue\u201D.").addText((t) => {
+      t.inputEl.type = "date";
+      t.setValue(this.dueDate).onChange((v) => this.dueDate = v);
+    });
+    new import_obsidian4.Setting(contentEl).setName("Show on the printed week").setDesc("Draw this to-do on the printable week-at-a-glance planner on its scheduled or due day.").addToggle((t) => t.setValue(this.showOnWeekPrint).onChange((v) => this.showOnWeekPrint = v));
     new import_obsidian4.Setting(contentEl).addButton((b) => b.setButtonText("Cancel").onClick(() => this.close())).addButton((b) => b.setButtonText(this.existing ? "Save" : "Add").setCta().onClick(() => void this.submit()));
   }
   renderDynamic(host) {
@@ -896,7 +1118,9 @@ var TodoEditModal = class extends import_obsidian4.Modal {
       text,
       recurrence: this.buildRecurrence(),
       scheduledDate: this.scheduledDate || void 0,
-      scheduledTime: this.scheduledTime || void 0
+      scheduledTime: this.scheduledTime || void 0,
+      dueDate: this.dueDate || void 0,
+      showOnWeekPrint: this.showOnWeekPrint
     };
     if (this.existing) await this.store.update(this.existing.id, patch);
     else await this.store.add(patch);
@@ -1493,7 +1717,8 @@ var AgendaPanel = class extends BasePanel {
         }
       }
       items.sort((a, b) => a.item.sortKey - b.item.sortKey || a.item.summary.localeCompare(b.item.summary));
-      days.push({ date, items });
+      const todos = this.ctx.todos.itemsForWeekPrint(dateStr).map((t) => t.text);
+      days.push({ date, items, todos });
     }
     const legend = calendars.map((c) => ({ label: c.label, color: c.color }));
     openPrintDocument(buildWeekHtml(days, legend, start));
@@ -1535,12 +1760,14 @@ function buildWeekHtml(days, legend, weekStart) {
 						<span class="evt-title">${title2}<span class="evt-cal">${escapeHtml(pi.label)}${loc}</span></span>
 					</div>`;
     }).join("");
+    const todos = day.todos.length ? `<div class="todos">${day.todos.map((t) => `<div class="todo"><span class="todo-box"></span><span class="todo-text">${escapeHtml(t)}</span></div>`).join("")}</div>` : "";
     return `<section class="day">
 				<header class="day-h">
 					<span class="day-name">${(0, import_obsidian6.moment)(day.date).format("dddd")}</span>
 					<span class="day-date">${(0, import_obsidian6.moment)(day.date).format("MMM D")}</span>
 				</header>
 				<div class="events">${events}</div>
+				${todos}
 				<div class="write"></div>
 			</section>`;
   }).join("");
@@ -1575,6 +1802,10 @@ function buildWeekHtml(days, legend, weekStart) {
 	.evt-time { flex: 0 0 auto; color: #333; font-variant-numeric: tabular-nums; min-width: 66px; }
 	.evt-title { font-weight: 600; }
 	.evt-cal { display: block; font-weight: 400; color: #777; font-size: 10px; }
+	.todos { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 4px; padding-top: 3px; border-top: 1px dashed #ddd; }
+	.todo { display: flex; align-items: baseline; gap: 6px; font-size: 11px; }
+	.todo-box { flex: 0 0 auto; width: 9px; height: 9px; border: 1px solid #888; border-radius: 2px; align-self: center; }
+	.todo-text { font-weight: 500; }
 	.write { flex: 1 1 auto; min-height: 22mm; background-image: repeating-linear-gradient(to bottom, transparent, transparent 6mm, #e2e2e2 6mm, #e2e2e2 calc(6mm + 1px)); }
 	.write.tall { min-height: 48mm; }
 	@media print { body { padding: 0; } @page { margin: 12mm; } }
@@ -2727,18 +2958,44 @@ var DashSettingTab = class extends import_obsidian14.PluginSettingTab {
         }
       })
     );
-    new import_obsidian14.Setting(containerEl).setName("Calendar share links").setDesc("Up to 20 calendars. One per line, as `Label | https://\u2026` (a public Proton Calendar / ICS share link). Today only \u2014 there is no month view.").addTextArea((t) => {
-      t.setValue(s.agendaUrls.map((c) => `${c.label} | ${c.url}`).join("\n"));
-      t.inputEl.rows = 8;
-      t.onChange(async (v) => {
-        s.agendaUrls = v.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 20).map((line) => {
-          const bar = line.indexOf("|");
-          if (bar === -1) return { label: "Calendar", url: line };
-          return { label: line.slice(0, bar).trim() || "Calendar", url: line.slice(bar + 1).trim() };
+    new import_obsidian14.Setting(containerEl).setName("Calendar share links").setDesc("Up to 20 public Proton Calendar / ICS share links (.ics). Each has its own label, address, and a remove button. Today only \u2014 there is no month view.");
+    const calList = containerEl.createDiv({ cls: "dash-settings-cal-list" });
+    const renderCals = () => {
+      calList.empty();
+      s.agendaUrls.forEach((cal, i) => {
+        const row = new import_obsidian14.Setting(calList).setName(`Calendar ${i + 1}`);
+        row.addText(
+          (t) => t.setPlaceholder("Label").setValue(cal.label).onChange(async (v) => {
+            cal.label = v.trim() || "Calendar";
+            await this.save();
+          })
+        );
+        row.addText((t) => {
+          t.setPlaceholder("https://\u2026/basic.ics").setValue(cal.url).onChange(async (v) => {
+            cal.url = v.trim();
+            await this.save();
+          });
+          t.inputEl.classList.add("dash-settings-cal-url");
         });
-        await this.save();
+        row.addExtraButton(
+          (b) => b.setIcon("trash").setTooltip("Remove this calendar").onClick(async () => {
+            s.agendaUrls.splice(i, 1);
+            await this.save();
+            renderCals();
+          })
+        );
       });
-    });
+      const addRow = new import_obsidian14.Setting(calList);
+      addRow.addButton(
+        (b) => b.setButtonText("+ Add calendar").setDisabled(s.agendaUrls.length >= 20).onClick(async () => {
+          if (s.agendaUrls.length >= 20) return;
+          s.agendaUrls.push({ label: "Calendar", url: "" });
+          await this.save();
+          renderCals();
+        })
+      );
+    };
+    renderCals();
     new import_obsidian14.Setting(containerEl).setName("Search").setHeading();
     new import_obsidian14.Setting(containerEl).setName("Folders to search").setDesc("The knowledge-base search looks only inside these folders. One folder per line.").addTextArea((t) => {
       t.setValue(s.kbSearchPaths.join("\n"));

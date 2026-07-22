@@ -356,6 +356,43 @@
 }
 .dash-todo-icon:hover, .dash-sb-icon:hover { background: var(--dash-surface-alt); color: var(--dash-text); }
 .dash-todo-icon[disabled] { opacity: 0.3; cursor: default; }
+
+/* Each to-do is a row plus an optional expandable detail (note + sub-tasks); the
+   row separator moves to the item wrapper so it sits below the detail too. */
+.dash-todo-item { border-bottom: var(--dash-rule-weight) solid var(--dash-border); }
+.dash-todo-item:last-child { border-bottom: none; }
+.dash-todo-item .dash-todo-row { border-bottom: none; }
+.dash-todo-detail { padding: 2px 4px 8px 34px; display: flex; flex-direction: column; gap: 6px; }
+.dash-todo-note-input,
+.dash-subtask-input {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 5px 8px;
+	border: var(--dash-rule-weight) solid var(--dash-border);
+	border-radius: var(--dash-radius);
+	background: var(--dash-surface);
+	color: var(--dash-text);
+	font-size: 0.9em;
+}
+.dash-subtask-list { display: flex; flex-direction: column; gap: 2px; }
+.dash-subtask-row { display: flex; align-items: center; gap: 8px; }
+.dash-subtask-row.is-done .dash-subtask-text { text-decoration: line-through; color: var(--dash-text-muted); }
+.dash-subtask-check {
+	flex: 0 0 auto;
+	width: 18px;
+	height: 18px;
+	border-radius: 4px;
+	border: 2px solid var(--dash-border);
+	background: var(--dash-surface);
+	color: var(--dash-accent);
+	font-size: 0.7em;
+	line-height: 1;
+	cursor: pointer;
+}
+.dash-subtask-check:hover { border-color: var(--dash-accent); }
+.dash-subtask-text { flex: 1 1 auto; min-width: 0; word-break: break-word; font-size: 0.92em; }
+.dash-subtask-add { display: flex; gap: 6px; align-items: center; }
+.dash-btn-sm { padding: 4px 10px; font-size: 0.85em; flex: 0 0 auto; }
 .dash-todo-done > summary { cursor: pointer; color: var(--dash-text-muted); font-size: 0.85em; margin-top: 8px; }
 .dash-day-toggle {
 	border: var(--dash-rule-weight) solid var(--dash-border);
@@ -538,3 +575,39 @@
 /* -------------------------------------------------------- settings helper */
 
 .dash-settings-panel-list { margin-bottom: 8px; }
+.dash-settings-cal-list {
+	border: var(--dash-rule-weight) solid var(--dash-border);
+	border-radius: var(--dash-radius);
+	padding: 4px 10px;
+	margin-bottom: 10px;
+}
+
+/* Calendar rows carry a label, an address, and a remove button. Let the control
+   cluster wrap instead of overflowing on a narrow settings pane, and give the
+   address field room to grow. */
+.dash-settings-cal-list .setting-item {
+	flex-wrap: wrap;
+	gap: 6px 10px;
+	padding: 10px 4px;
+	border-top: var(--dash-rule-weight) solid var(--dash-border);
+}
+.dash-settings-cal-list .setting-item:first-child { border-top: none; }
+.dash-settings-cal-list .setting-item-info {
+	margin-right: auto;
+	flex: 1 1 40%;
+	min-width: 110px;
+}
+.dash-settings-cal-list .setting-item-control {
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 6px;
+}
+.dash-settings-cal-url { flex: 1 1 200px; min-width: 160px; }
+
+@media (max-width: 640px) {
+	.dash-settings-cal-list .setting-item {
+		flex-direction: column;
+		align-items: stretch;
+	}
+	.dash-settings-cal-list .setting-item-control { justify-content: flex-start; }
+}

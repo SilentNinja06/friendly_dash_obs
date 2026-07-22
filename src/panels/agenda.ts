@@ -285,7 +285,10 @@ export class AgendaPanel extends BasePanel {
 				}
 			}
 			items.sort((a, b) => a.item.sortKey - b.item.sortKey || a.item.summary.localeCompare(b.item.summary));
-			days.push({ date, items });
+			// Opt-in to-dos (Show on the printed week) for this day, as blank
+			// checkboxes to tick off on paper.
+			const todos = this.ctx.todos.itemsForWeekPrint(dateStr).map((t) => t.text);
+			days.push({ date, items, todos });
 		}
 
 		const legend = calendars.map((c) => ({ label: c.label, color: c.color }));
@@ -301,6 +304,7 @@ interface PrintItem {
 interface PrintDay {
 	date: Date;
 	items: PrintItem[];
+	todos: string[];
 }
 
 function humanizeFetchError(e: unknown): string {
@@ -367,12 +371,18 @@ function buildWeekHtml(days: PrintDay[], legend: Legend[], weekStart: Date): str
 					</div>`;
 				})
 				.join("");
+			const todos = day.todos.length
+				? `<div class="todos">${day.todos
+						.map((t) => `<div class="todo"><span class="todo-box"></span><span class="todo-text">${escapeHtml(t)}</span></div>`)
+						.join("")}</div>`
+				: "";
 			return `<section class="day">
 				<header class="day-h">
 					<span class="day-name">${moment(day.date).format("dddd")}</span>
 					<span class="day-date">${moment(day.date).format("MMM D")}</span>
 				</header>
 				<div class="events">${events}</div>
+				${todos}
 				<div class="write"></div>
 			</section>`;
 		})
@@ -411,6 +421,10 @@ function buildWeekHtml(days: PrintDay[], legend: Legend[], weekStart: Date): str
 	.evt-time { flex: 0 0 auto; color: #333; font-variant-numeric: tabular-nums; min-width: 66px; }
 	.evt-title { font-weight: 600; }
 	.evt-cal { display: block; font-weight: 400; color: #777; font-size: 10px; }
+	.todos { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 4px; padding-top: 3px; border-top: 1px dashed #ddd; }
+	.todo { display: flex; align-items: baseline; gap: 6px; font-size: 11px; }
+	.todo-box { flex: 0 0 auto; width: 9px; height: 9px; border: 1px solid #888; border-radius: 2px; align-self: center; }
+	.todo-text { font-weight: 500; }
 	.write { flex: 1 1 auto; min-height: 22mm; background-image: repeating-linear-gradient(to bottom, transparent, transparent 6mm, #e2e2e2 6mm, #e2e2e2 calc(6mm + 1px)); }
 	.write.tall { min-height: 48mm; }
 	@media print { body { padding: 0; } @page { margin: 12mm; } }

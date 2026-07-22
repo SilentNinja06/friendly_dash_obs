@@ -8,6 +8,7 @@ import {
 	TodoStore,
 	describeRecurrence,
 } from "../core/todostore";
+import { allSubItemsDone, subItemDone, subItemsDoneCount } from "../core/subitems";
 
 /**
  * Persistent to-do panel (§5.2). The list is authoritative; nothing resets
@@ -19,6 +20,8 @@ import {
 export class TodoPanel extends BasePanel {
 	id = "todo";
 	title = "To-do";
+	/** Which rows are expanded to show their sub-tasks / note — survives re-render. */
+	private expanded = new Set<string>();
 
 	protected renderBody(): void {
 		const store = this.ctx.todos;
@@ -64,7 +67,9 @@ export class TodoPanel extends BasePanel {
 	private renderRow(parent: HTMLElement, inst: TodoInstance, idx: number, count: number): void {
 		const store = this.ctx.todos;
 		const item = inst.item;
-		const row = parent.createDiv({ cls: "dash-todo-row" });
+		const today = moment().format("YYYY-MM-DD");
+		const wrap = parent.createDiv({ cls: "dash-todo-item" });
+		const row = wrap.createDiv({ cls: "dash-todo-row" });
 		if (inst.flagged) row.addClass("is-flagged");
 		if (inst.done || inst.skipped) row.addClass("is-done");
 
@@ -80,9 +85,29 @@ export class TodoPanel extends BasePanel {
 		const meta = main.createDiv({ cls: "dash-todo-meta" });
 		if (item.recurrence.type !== "none") meta.createSpan({ cls: "dash-chip dash-chip-cold", text: describeRecurrence(item.recurrence) });
 		if (item.scheduledTime) meta.createSpan({ cls: "dash-chip", text: item.scheduledTime });
+		if (item.dueDate) {
+			const overdue = !inst.done && item.dueDate < today;
+			meta.createSpan({ cls: overdue ? "dash-chip dash-chip-warn" : "dash-chip", text: dueLabel(item.dueDate, today) });
+		}
+		if (item.showOnWeekPrint) meta.createSpan({ cls: "dash-chip dash-chip-cold", text: "on planner" });
 		if (inst.flagged) meta.createSpan({ cls: "dash-chip dash-chip-warn", text: inst.flagLabel });
+		const subs = item.subItems ?? [];
+		if (subs.length > 0) {
+			const doneN = subItemsDoneCount(item, today);
+			const chip = meta.createSpan({ cls: "dash-chip dash-chip-cold", text: `sub-tasks ${doneN}/${subs.length}` });
+			if (allSubItemsDone(item, today)) chip.addClass("dash-chip-warn");
+		}
 
 		const actions = row.createDiv({ cls: "dash-todo-actions" });
+		const hasDetail = subs.length > 0 || !!item.note;
+		const isOpen = this.expanded.has(item.id);
+		// The chevron always expands — a collapsed row still offers a caret so a
+		// fresh to-do can be given its first sub-task or note.
+		this.iconBtn(actions, isOpen ? "▾" : "▸", hasDetail ? "Sub-tasks & note" : "Add sub-tasks or a note", false, () => {
+			if (isOpen) this.expanded.delete(item.id);
+			else this.expanded.add(item.id);
+			this.rerender();
+		});
 		if (!inst.done && count > 1 && idx >= 0) {
 			this.iconBtn(actions, "↑", "Move up", idx === 0, async () => {
 				await this.move(idx, -1);
@@ -110,6 +135,77 @@ export class TodoPanel extends BasePanel {
 			await store.remove(item.id);
 			this.after();
 		});
+
+		if (isOpen) this.renderDetail(wrap, inst, today);
+	}
+
+	/** Expanded region under a row: an inline note line and the sub-task checklist,
+	 * with per-occurrence completion for repeating to-dos. */
+	private renderDetail(wrap: HTMLElement, inst: TodoInstance, today: string): void {
+		const store = this.ctx.todos;
+		const item = inst.item;
+		const detail = wrap.createDiv({ cls: "dash-todo-detail" });
+
+		// --- note ---
+		const noteInput = detail.createEl("input", {
+			cls: "dash-todo-note-input",
+			attr: { type: "text", placeholder: "Add a note…", value: item.note ?? "" },
+		});
+		this.bindTextFocus(noteInput);
+		const saveNote = () => {
+			if ((item.note ?? "") === noteInput.value.trim()) return;
+			void store.setNote(item.id, noteInput.value).then(() => this.after());
+		};
+		noteInput.addEventListener("blur", saveNote);
+		noteInput.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				noteInput.blur();
+			}
+		});
+
+		// --- sub-tasks ---
+		const subList = detail.createDiv({ cls: "dash-subtask-list" });
+		for (const sub of item.subItems ?? []) {
+			const srow = subList.createDiv({ cls: "dash-subtask-row" });
+			const done = subItemDone(item, sub.id, today);
+			if (done) srow.addClass("is-done");
+			const cb = srow.createEl("button", {
+				cls: "dash-subtask-check",
+				attr: { "aria-label": done ? "Mark sub-task not done" : "Mark sub-task done" },
+			});
+			cb.setText(done ? "✓" : "");
+			cb.addEventListener("click", async () => {
+				await store.toggleSubItem(item.id, sub.id, today);
+				this.after();
+			});
+			srow.createSpan({ cls: "dash-subtask-text", text: sub.text });
+			this.iconBtn(srow, "🗑", "Remove sub-task", false, async () => {
+				await store.removeSubItem(item.id, sub.id);
+				this.after();
+			});
+		}
+
+		// --- add a sub-task ---
+		const addRow = detail.createDiv({ cls: "dash-subtask-add" });
+		const addInput = addRow.createEl("input", {
+			cls: "dash-subtask-input",
+			attr: { type: "text", placeholder: "Add a sub-task…" },
+		});
+		this.bindTextFocus(addInput);
+		const addSub = () => {
+			const text = addInput.value.trim();
+			if (!text) return;
+			void store.addSubItem(item.id, text).then(() => this.after());
+		};
+		addInput.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				addSub();
+			}
+		});
+		const addBtn = addRow.createEl("button", { cls: "dash-btn dash-btn-sm", text: "Add" });
+		addBtn.addEventListener("click", addSub);
 	}
 
 	private iconBtn(parent: HTMLElement, glyph: string, label: string, disabled: boolean, onClick: () => void): void {
@@ -131,6 +227,12 @@ export class TodoPanel extends BasePanel {
 	private after(): void {
 		this.ctx.requestRefresh("manual");
 	}
+}
+
+function dueLabel(due: string, today: string): string {
+	if (due < today) return `overdue · ${moment(due, "YYYY-MM-DD").format("MMM D")}`;
+	if (due === today) return "due today";
+	return `due ${moment(due, "YYYY-MM-DD").format("MMM D")}`;
 }
 
 function activeSort(a: TodoInstance, b: TodoInstance): number {
@@ -162,6 +264,8 @@ class TodoEditModal extends Modal {
 	private everyN: number;
 	private scheduledDate: string;
 	private scheduledTime: string;
+	private dueDate: string;
+	private showOnWeekPrint: boolean;
 
 	constructor(
 		app: App,
@@ -178,6 +282,8 @@ class TodoEditModal extends Modal {
 		this.everyN = e?.recurrence.n ?? 2;
 		this.scheduledDate = e?.scheduledDate ?? "";
 		this.scheduledTime = e?.scheduledTime ?? "";
+		this.dueDate = e?.dueDate ?? "";
+		this.showOnWeekPrint = e?.showOnWeekPrint ?? false;
 	}
 
 	onOpen(): void {
@@ -227,6 +333,19 @@ class TodoEditModal extends Modal {
 				t.inputEl.type = "time";
 				t.setValue(this.scheduledTime).onChange((v) => (this.scheduledTime = v));
 			});
+
+		new Setting(contentEl)
+			.setName("Due by")
+			.setDesc("Optional soft deadline. Shown as a chip; once it's past, it reads “overdue”.")
+			.addText((t) => {
+				t.inputEl.type = "date";
+				t.setValue(this.dueDate).onChange((v) => (this.dueDate = v));
+			});
+
+		new Setting(contentEl)
+			.setName("Show on the printed week")
+			.setDesc("Draw this to-do on the printable week-at-a-glance planner on its scheduled or due day.")
+			.addToggle((t) => t.setValue(this.showOnWeekPrint).onChange((v) => (this.showOnWeekPrint = v)));
 
 		new Setting(contentEl)
 			.addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()))
@@ -286,6 +405,8 @@ class TodoEditModal extends Modal {
 			recurrence: this.buildRecurrence(),
 			scheduledDate: this.scheduledDate || undefined,
 			scheduledTime: this.scheduledTime || undefined,
+			dueDate: this.dueDate || undefined,
+			showOnWeekPrint: this.showOnWeekPrint,
 		};
 		if (this.existing) await this.store.update(this.existing.id, patch);
 		else await this.store.add(patch);
