@@ -433,7 +433,7 @@
    tap target for the edit/delete modal. */
 .dash-agenda-local-chip { margin-left: 6px; font-size: 0.68em; vertical-align: middle; }
 .dash-agenda-row-editable { cursor: pointer; border-radius: var(--dash-radius); }
-.dash-agenda-row-editable:hover { background: var(--dash-surface-2, rgba(127, 127, 127, 0.08)); }
+.dash-agenda-row-editable:hover { background: var(--dash-surface-alt); }
 .dash-agenda-now { display: flex; align-items: center; gap: 8px; padding: 2px 10px; margin: 2px 0; }
 .dash-agenda-now::before, .dash-agenda-now::after { content: ""; height: 2px; background: var(--dash-accent); flex: 1 1 auto; opacity: 0.7; }
 .dash-agenda-now-label {

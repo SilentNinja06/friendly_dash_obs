@@ -1,9 +1,9 @@
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 import type DailyDashPlugin from "./main";
+import { DEFAULT_STREAK } from "dash-core";
 import { Panel, PanelContext, RefreshReason } from "./panels/types";
 import { createPanels } from "./panels/registry";
-import { LocalEventModal } from "./panels/localeventmodal";
-import type { LocalEvent } from "./core/localevents";
+import { friendlyCompanion } from "./companion";
 
 export const VIEW_TYPE_DASH = "daily-dashboard";
 
@@ -45,12 +45,21 @@ export class DashView extends ItemView {
 			plugin: this.plugin,
 			bridge: this.plugin.bridge,
 			todos: this.plugin.todos,
+			// This dashboard has no observation-streak concept; a zeroed snapshot
+			// satisfies the core panel surface without introducing the notion.
+			streak: DEFAULT_STREAK,
+			// Recipe Manager, adapted to the generic companion surface (read-only).
+			companion: friendlyCompanion(this.plugin.bridge),
 			runtime: this.plugin.runtime,
+			// Core library panels take their copy via their constructors; nothing
+			// reads context copy on this dashboard yet.
+			copy: {},
 			settings: () => this.plugin.settings,
-			localEvents: () => this.plugin.localEvents,
-			openLocalEvent: (existing: LocalEvent | undefined, onDone: () => void) =>
-				new LocalEventModal(this.app, this.plugin.localEventsStore, existing, onDone).open(),
+			agendaCache: this.plugin.agendaCache,
+			localEvents: this.plugin.localEvents,
+			persist: () => this.plugin.saveData_(),
 			requestRefresh: (reason: RefreshReason = "manual") => void this.refreshPanels(reason),
+			markFoodFocus: () => {},
 		};
 	}
 
@@ -95,7 +104,7 @@ export class DashView extends ItemView {
 
 		this.grid = root.createDiv({ cls: "dash-grid" });
 		const s = this.plugin.settings;
-		const panels = createPanels(s.panelOrder, s.enabledPanels);
+		const panels = createPanels(s.panelOrder, s.enabledPanels, this.plugin);
 		const ctx = this.ctx();
 
 		for (const panel of panels) {

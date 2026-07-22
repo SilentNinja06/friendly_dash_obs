@@ -7,8 +7,10 @@ import {
 	TodoItem,
 	TodoStore,
 	describeRecurrence,
-} from "../core/todostore";
-import { allSubItemsDone, subItemDone, subItemsDoneCount } from "../core/subitems";
+	allSubItemsDone,
+	subItemDone,
+	subItemsDoneCount,
+} from "dash-core";
 
 /**
  * Persistent to-do panel (§5.2). The list is authoritative; nothing resets

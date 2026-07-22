@@ -1,12 +1,11 @@
 import { moment } from "obsidian";
 import { BasePanel, placard } from "./types";
-import { AgendaItem, eventsOnDate, fetchICS, parseICS } from "../core/ics";
-import { LocalEvent, localEventToAgendaItem } from "../core/localevents";
+import { AgendaItem, eventsOnDate, fetchICS, parseICS, LocalEvent, localEventToAgendaItem, LocalEventModal } from "dash-core";
 import { calendarColorVar } from "../core/themes";
 
 /** Swatch colour for local (dashboard-only) events, distinct from any calendar
  * slot. Falls back to a warm accent if the theme doesn't define the token. */
-const LOCAL_EVENT_COLOR = "var(--dash-cal-local, var(--interactive-accent, #b5836b))";
+const LOCAL_EVENT_COLOR = "var(--dash-cal-local, var(--dash-accent, #b5836b))";
 
 /**
  * Today's agenda (§5.3). Today only — no month view. Up to 20 calendars, fetched
@@ -49,13 +48,15 @@ export class AgendaPanel extends BasePanel {
 		const toolbar = this.el.createDiv({ cls: "dash-agenda-toolbar" });
 		const addBtn = toolbar.createEl("button", { cls: "dash-btn", text: "＋ Add event" });
 		addBtn.setAttr("title", "Add a one-off event to today's agenda (stored on the dashboard, synced across devices)");
-		addBtn.addEventListener("click", () => this.ctx.openLocalEvent(undefined, () => this.rerender()));
+		addBtn.addEventListener("click", () =>
+			new LocalEventModal(this.ctx.app, this.ctx.plugin.localEventsStore, undefined, () => this.rerender()).open()
+		);
 		const printBtn = toolbar.createEl("button", { cls: "dash-btn", text: "🖨 Print week" });
 		printBtn.setAttr("title", "Open a printable week-at-a-glance planner for this week");
 		printBtn.addEventListener("click", () => this.printWeek());
 
 		const today = moment().format("YYYY-MM-DD");
-		const localToday = this.ctx.localEvents().filter((e) => e.date === today);
+		const localToday = this.ctx.localEvents.filter((e) => e.date === today);
 
 		if (s.agendaUrls.length === 0 && localToday.length === 0) {
 			this.el.createDiv({
@@ -134,9 +135,7 @@ export class AgendaPanel extends BasePanel {
 			time.setText(r.item.allDay ? "all day" : r.item.timeLabel);
 			const body = row.createDiv({ cls: "dash-agenda-body" });
 			const title = body.createDiv({ cls: "dash-agenda-title", text: r.item.summary });
-			if (r.local) {
-				title.createSpan({ cls: "dash-chip dash-agenda-local-chip", text: r.label });
-			}
+			if (r.local) title.createSpan({ cls: "dash-chip dash-agenda-local-chip", text: r.label });
 			const sub = [r.local ? "" : r.label, r.item.location].filter(Boolean).join(" · ");
 			if (sub) body.createDiv({ cls: "dash-agenda-sub", text: sub });
 			// Local events are editable/deletable in place; calendar events are read-only.
@@ -144,7 +143,9 @@ export class AgendaPanel extends BasePanel {
 				const ev = r.local;
 				row.classList.add("dash-agenda-row-editable");
 				row.setAttr("title", "Edit or delete this event");
-				row.addEventListener("click", () => this.ctx.openLocalEvent(ev, () => this.rerender()));
+				row.addEventListener("click", () =>
+					new LocalEventModal(this.ctx.app, this.ctx.plugin.localEventsStore, ev, () => this.rerender()).open()
+				);
 			}
 		}
 		// If every remaining event is already past, the "now" line goes at the end.
