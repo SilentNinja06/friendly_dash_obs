@@ -50,6 +50,9 @@ export interface DashSettings {
 	places: PlaceLink[];
 	/** Vault file the persistent to-do list lives in (Markdown, so it syncs). */
 	directivesPath: string;
+	/** Vault file the dashboard-only local events live in (Markdown, so they sync
+	 * across devices — same rationale as directivesPath). */
+	localEventsPath: string;
 	/** Where completed to-dos are archived in today's note. */
 	completedTasksMarker: string;
 	completedTasksHeading: string;
@@ -90,6 +93,7 @@ export const DEFAULT_SETTINGS: DashSettings = {
 		{ label: "Recipe index", target: "recipe-manager:recipe-index", type: "command" },
 	],
 	directivesPath: "Daily Dashboard/To-dos.md",
+	localEventsPath: "Daily Dashboard/Local Events.md",
 	completedTasksMarker: "",
 	completedTasksHeading: "Completed tasks",
 };
@@ -344,6 +348,13 @@ export class DashSettingTab extends PluginSettingTab {
 			"The Markdown file your to-do list is saved in. Markdown always syncs via Obsidian Sync, so the list follows you across devices. Any extension you type becomes .md.",
 			s.directivesPath,
 			(v) => (s.directivesPath = v || "Daily Dashboard/To-dos.md")
+		);
+		this.addText(
+			containerEl,
+			"Local events file",
+			"The Markdown file your dashboard-only agenda events are saved in. Markdown always syncs via Obsidian Sync, so events you add on one device show up on the others. Any extension you type becomes .md.",
+			s.localEventsPath,
+			(v) => (s.localEventsPath = v || "Daily Dashboard/Local Events.md")
 		);
 		this.addText(containerEl, "Completed-tasks heading", "Completed to-dos are logged under this heading in today's note.", s.completedTasksHeading, (v) => (s.completedTasksHeading = v || "Completed tasks"));
 		this.addText(containerEl, "Completed-tasks marker", "Optional. If set, completed tasks go after this marker instead of the heading.", s.completedTasksMarker, (v) => (s.completedTasksMarker = v), true);

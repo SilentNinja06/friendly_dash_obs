@@ -2,6 +2,8 @@ import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 import type DailyDashPlugin from "./main";
 import { Panel, PanelContext, RefreshReason } from "./panels/types";
 import { createPanels } from "./panels/registry";
+import { LocalEventModal } from "./panels/localeventmodal";
+import type { LocalEvent } from "./core/localevents";
 
 export const VIEW_TYPE_DASH = "daily-dashboard";
 
@@ -45,6 +47,9 @@ export class DashView extends ItemView {
 			todos: this.plugin.todos,
 			runtime: this.plugin.runtime,
 			settings: () => this.plugin.settings,
+			localEvents: () => this.plugin.localEvents,
+			openLocalEvent: (existing: LocalEvent | undefined, onDone: () => void) =>
+				new LocalEventModal(this.app, this.plugin.localEventsStore, existing, onDone).open(),
 			requestRefresh: (reason: RefreshReason = "manual") => void this.refreshPanels(reason),
 		};
 	}

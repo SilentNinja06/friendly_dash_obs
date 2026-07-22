@@ -2,6 +2,7 @@ import { App } from "obsidian";
 import type DailyDashPlugin from "../main";
 import type { Bridge } from "../core/bridge";
 import type { TodoStore } from "../core/todostore";
+import type { LocalEvent } from "../core/localevents";
 import type { DashSettings } from "../settings";
 
 export type RefreshReason = "open" | "interval" | "vault" | "manual";
@@ -24,6 +25,11 @@ export interface PanelContext {
 	todos: TodoStore;
 	runtime: DashRuntime;
 	settings(): DashSettings;
+	/** The dashboard-only local events (persisted in a synced Markdown file). */
+	localEvents(): LocalEvent[];
+	/** Open the add/edit/delete modal for a local event; `existing` undefined
+	 * means a new one. `onDone` runs after a successful save/delete. */
+	openLocalEvent(existing: LocalEvent | undefined, onDone: () => void): void;
 	/** Re-render all mounted panels. */
 	requestRefresh(reason?: RefreshReason): void;
 }

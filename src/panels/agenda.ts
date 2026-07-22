@@ -1,7 +1,12 @@
 import { moment } from "obsidian";
 import { BasePanel, placard } from "./types";
 import { AgendaItem, eventsOnDate, fetchICS, parseICS } from "../core/ics";
+import { LocalEvent, localEventToAgendaItem } from "../core/localevents";
 import { calendarColorVar } from "../core/themes";
+
+/** Swatch colour for local (dashboard-only) events, distinct from any calendar
+ * slot. Falls back to a warm accent if the theme doesn't define the token. */
+const LOCAL_EVENT_COLOR = "var(--dash-cal-local, var(--interactive-accent, #b5836b))";
 
 /**
  * Today's agenda (§5.3). Today only — no month view. Up to 20 calendars, fetched
@@ -42,20 +47,25 @@ export class AgendaPanel extends BasePanel {
 		head.createSpan({ cls: "dash-placard-badge", text: moment().format("ddd, MMM D") });
 
 		const toolbar = this.el.createDiv({ cls: "dash-agenda-toolbar" });
+		const addBtn = toolbar.createEl("button", { cls: "dash-btn", text: "＋ Add event" });
+		addBtn.setAttr("title", "Add a one-off event to today's agenda (stored on the dashboard, synced across devices)");
+		addBtn.addEventListener("click", () => this.ctx.openLocalEvent(undefined, () => this.rerender()));
 		const printBtn = toolbar.createEl("button", { cls: "dash-btn", text: "🖨 Print week" });
 		printBtn.setAttr("title", "Open a printable week-at-a-glance planner for this week");
 		printBtn.addEventListener("click", () => this.printWeek());
 
-		if (s.agendaUrls.length === 0) {
+		const today = moment().format("YYYY-MM-DD");
+		const localToday = this.ctx.localEvents().filter((e) => e.date === today);
+
+		if (s.agendaUrls.length === 0 && localToday.length === 0) {
 			this.el.createDiv({
 				cls: "dash-empty",
-				text: "No calendars yet. Add your calendar share links in the plugin settings (Settings → Daily Dashboard → Today's agenda) and today's events will appear here.",
+				text: "Nothing scheduled yet. Add your calendar share links in the plugin settings (Settings → Daily Dashboard → Today's agenda), or tap “＋ Add event” to jot a one-off onto today.",
 			});
 			return;
 		}
 
-		const today = moment().format("YYYY-MM-DD");
-		const rows: Array<{ item: AgendaItem; colorIndex: number; label: string }> = [];
+		const rows: Array<{ item: AgendaItem; color: string; label: string; local?: LocalEvent }> = [];
 		let anyCache = false;
 		let oldest = Infinity;
 
@@ -66,13 +76,18 @@ export class AgendaPanel extends BasePanel {
 				oldest = Math.min(oldest, cache.fetchedAt);
 				try {
 					for (const item of eventsOnDate(parseICS(cache.text), today)) {
-						rows.push({ item, colorIndex: i, label: cal.label });
+						rows.push({ item, color: calendarColorVar(i), label: cal.label });
 					}
 				} catch {
 					this.errors.set(cal.url, "couldn't be read");
 				}
 			}
 		});
+
+		// Local (dashboard-only) events feed the same sorted list.
+		for (const ev of localToday) {
+			rows.push({ item: localEventToAgendaItem(ev), color: LOCAL_EVENT_COLOR, label: "Event", local: ev });
+		}
 
 		// Failure notices — always visible, in plain language, per calendar.
 		const failed = s.agendaUrls.filter((c) => this.errors.has(c.url));
@@ -114,13 +129,23 @@ export class AgendaPanel extends BasePanel {
 			}
 			const row = list.createDiv({ cls: "dash-agenda-row" });
 			const swatch = row.createSpan({ cls: "dash-agenda-swatch" });
-			swatch.style.background = calendarColorVar(r.colorIndex);
+			swatch.style.background = r.color;
 			const time = row.createSpan({ cls: "dash-agenda-time" });
 			time.setText(r.item.allDay ? "all day" : r.item.timeLabel);
 			const body = row.createDiv({ cls: "dash-agenda-body" });
-			body.createDiv({ cls: "dash-agenda-title", text: r.item.summary });
-			const sub = [r.label, r.item.location].filter(Boolean).join(" · ");
+			const title = body.createDiv({ cls: "dash-agenda-title", text: r.item.summary });
+			if (r.local) {
+				title.createSpan({ cls: "dash-chip dash-agenda-local-chip", text: r.label });
+			}
+			const sub = [r.local ? "" : r.label, r.item.location].filter(Boolean).join(" · ");
 			if (sub) body.createDiv({ cls: "dash-agenda-sub", text: sub });
+			// Local events are editable/deletable in place; calendar events are read-only.
+			if (r.local) {
+				const ev = r.local;
+				row.classList.add("dash-agenda-row-editable");
+				row.setAttr("title", "Edit or delete this event");
+				row.addEventListener("click", () => this.ctx.openLocalEvent(ev, () => this.rerender()));
+			}
 		}
 		// If every remaining event is already past, the "now" line goes at the end.
 		if (!markerPlaced && rows.some((r) => !r.item.allDay)) {
