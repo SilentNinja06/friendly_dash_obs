@@ -1,9 +1,9 @@
 {
 	"id": "daily-dash",
 	"name": "Daily Dashboard",
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"minAppVersion": "1.4.0",
-	"description": "A warm, simple home dashboard for your vault — a clock, a daily verse, today's agenda, persistent to-dos, a journal, meals, and quick search. Works on desktop and mobile.",
+	"description": "A warm, modular home dashboard for your vault — clock, daily verse, agenda, to-dos, journal, meals, shopping and more. Turn on only the panels you want. Works on desktop and mobile.",
 	"author": "SilentNinja06",
 	"authorUrl": "https://github.com/SilentNinja06",
 	"isDesktopOnly": false
