@@ -1,7 +1,26 @@
 import { moment } from "obsidian";
 import { BasePanel, placard } from "./types";
-import { AgendaItem, eventsOnDate, fetchICS, parseICS, LocalEvent, localEventToAgendaItem, LocalEventModal } from "dash-core";
+import {
+	AgendaItem,
+	eventsOnDate,
+	fetchICS,
+	parseICS,
+	LocalEvent,
+	localEventToAgendaItem,
+	LocalEventModal,
+	WeeklyGoalsModal,
+	agendaState,
+	currentWeekKey,
+	formatGap,
+} from "dash-core";
 import { calendarColorVar } from "../core/themes";
+import type { CalendarLink } from "../settings";
+import { friendlyLocalEvents, friendlyWeeklyGoals, FRIENDLY_WEEKLYGOALS_COPY } from "../adapters";
+
+/** A calendar's swatch: its own colour if one was picked, else the theme's. */
+function calColor(cal: CalendarLink, index: number): string {
+	return cal.color || calendarColorVar(index);
+}
 
 /** Swatch colour for local (dashboard-only) events, distinct from any calendar
  * slot. Falls back to a warm accent if the theme doesn't define the token. */
@@ -33,10 +52,17 @@ export class AgendaPanel extends BasePanel {
 	private userScrolled = false;
 	private lastScrollTop = 0;
 	private suppressScrollHandler = false;
+	/** Today's items that feed the "what's next" countdown, kept for the minute tick. */
+	private countdownItems: AgendaItem[] = [];
+	private hadTimedEvents = false;
+	private countdownEl?: HTMLElement;
 
 	protected async setup(): Promise<void> {
 		const minutes = Math.max(1, this.ctx.settings().agendaRefreshMinutes || 30);
 		this.setInterval(() => void this.fetchAll(), minutes * 60 * 1000);
+		this.setInterval(() => {
+			if (this.countdownEl?.isConnected) this.renderCountdown();
+		}, 60 * 1000);
 		void this.fetchAll();
 	}
 
@@ -49,7 +75,19 @@ export class AgendaPanel extends BasePanel {
 		const addBtn = toolbar.createEl("button", { cls: "dash-btn", text: "＋ Add event" });
 		addBtn.setAttr("title", "Add a one-off event to today's agenda (stored on the dashboard, synced across devices)");
 		addBtn.addEventListener("click", () =>
-			new LocalEventModal(this.ctx.app, this.ctx.plugin.localEventsStore, undefined, () => this.rerender()).open()
+			new LocalEventModal(this.ctx.app, friendlyLocalEvents(this.ctx.plugin), undefined, () => this.rerender()).open()
+		);
+		const goalsBtn = toolbar.createEl("button", { cls: "dash-btn", text: "🎯 Week's goals" });
+		goalsBtn.setAttr("title", "Set a few goals for this week — they print at the top of the week planner");
+		goalsBtn.addEventListener("click", () =>
+			new WeeklyGoalsModal(
+				this.ctx.app,
+				friendlyWeeklyGoals(this.ctx.plugin),
+				this.ctx.todos,
+				currentWeekKey(),
+				() => this.ctx.requestRefresh("vault"),
+				FRIENDLY_WEEKLYGOALS_COPY
+			).open()
 		);
 		const printBtn = toolbar.createEl("button", { cls: "dash-btn", text: "🖨 Print week" });
 		printBtn.setAttr("title", "Open a printable week-at-a-glance planner for this week");
@@ -66,7 +104,7 @@ export class AgendaPanel extends BasePanel {
 			return;
 		}
 
-		const rows: Array<{ item: AgendaItem; color: string; label: string; local?: LocalEvent }> = [];
+		const rows: Array<{ item: AgendaItem; color: string; label: string; local?: LocalEvent; countdown: boolean }> = [];
 		let anyCache = false;
 		let oldest = Infinity;
 
@@ -77,7 +115,7 @@ export class AgendaPanel extends BasePanel {
 				oldest = Math.min(oldest, cache.fetchedAt);
 				try {
 					for (const item of eventsOnDate(parseICS(cache.text), today)) {
-						rows.push({ item, color: calendarColorVar(i), label: cal.label });
+						rows.push({ item, color: calColor(cal, i), label: cal.label, countdown: cal.countdown !== false });
 					}
 				} catch {
 					this.errors.set(cal.url, "couldn't be read");
@@ -87,7 +125,16 @@ export class AgendaPanel extends BasePanel {
 
 		// Local (dashboard-only) events feed the same sorted list.
 		for (const ev of localToday) {
-			rows.push({ item: localEventToAgendaItem(ev), color: LOCAL_EVENT_COLOR, label: "Event", local: ev });
+			rows.push({ item: localEventToAgendaItem(ev), color: LOCAL_EVENT_COLOR, label: "Event", local: ev, countdown: true });
+		}
+
+		// "What's next" — the event in progress or the next one, and how long you're free.
+		this.countdownItems = rows.filter((r) => r.countdown).map((r) => r.item);
+		this.hadTimedEvents = this.countdownItems.some((i) => !i.allDay);
+		this.countdownEl = undefined;
+		if (rows.length > 0) {
+			this.countdownEl = this.el.createDiv({ cls: "dash-agenda-next" });
+			this.renderCountdown();
 		}
 
 		// Failure notices — always visible, in plain language, per calendar.
@@ -144,7 +191,7 @@ export class AgendaPanel extends BasePanel {
 				row.classList.add("dash-agenda-row-editable");
 				row.setAttr("title", "Edit or delete this event");
 				row.addEventListener("click", () =>
-					new LocalEventModal(this.ctx.app, this.ctx.plugin.localEventsStore, ev, () => this.rerender()).open()
+					new LocalEventModal(this.ctx.app, friendlyLocalEvents(this.ctx.plugin), ev, () => this.rerender()).open()
 				);
 			}
 		}
@@ -185,6 +232,37 @@ export class AgendaPanel extends BasePanel {
 				});
 			}
 		}
+	}
+
+	/** Draw (or redraw, each minute) the "what's next" strip. */
+	private renderCountdown(): void {
+		const el = this.countdownEl;
+		if (!el) return;
+		el.empty();
+		const state = agendaState(this.countdownItems, Date.now());
+		if (state.kind === "clear") {
+			el.addClass("is-clear");
+			el.removeClass("is-now");
+			el.createDiv({
+				cls: "dash-agenda-gap",
+				text: this.hadTimedEvents ? "Nothing else on the calendar today — the rest of the day is yours." : "Nothing on the calendar today.",
+			});
+			return;
+		}
+		el.removeClass("is-clear");
+		el.toggleClass("is-now", state.kind === "now");
+		const until = formatGap(state.untilMs ?? 0);
+		const line = el.createDiv({ cls: "dash-agenda-next-line" });
+		line.createSpan({ cls: "dash-agenda-next-label", text: state.kind === "now" ? "Now" : "Next" });
+		line.createSpan({ cls: "dash-agenda-next-summary", text: state.summary ?? "" });
+		line.createSpan({ cls: "dash-agenda-next-when", text: state.kind === "now" ? `ends in ${until}` : `in ${until}` });
+		const gap =
+			state.kind === "now"
+				? state.gapMs === undefined
+					? "After this, you're free for the rest of the day."
+					: `After this, you're free for ${formatGap(state.gapMs)}.`
+				: `You're free for ${until}.`;
+		el.createDiv({ cls: "dash-agenda-gap", text: gap });
 	}
 
 	private scrollToNow(list: HTMLElement, marker: HTMLElement | null): void {
@@ -271,8 +349,9 @@ export class AgendaPanel extends BasePanel {
 					/* skip an unparseable calendar */
 				}
 			}
-			return { events, color: colors[i % colors.length], label: cal.label };
+			return { events, color: cal.color || colors[i % colors.length], label: cal.label };
 		});
+		const localColor = getComputedStyle(this.el).getPropertyValue("--dash-cal-local").trim() || "#b5836b";
 
 		const start = startOfWeek(new Date());
 		const days: PrintDay[] = [];
@@ -285,6 +364,9 @@ export class AgendaPanel extends BasePanel {
 					items.push({ item, color: cal.color, label: cal.label });
 				}
 			}
+			for (const ev of this.ctx.localEvents.filter((e) => e.date === dateStr)) {
+				items.push({ item: localEventToAgendaItem(ev), color: localColor, label: "Event" });
+			}
 			items.sort((a, b) => a.item.sortKey - b.item.sortKey || a.item.summary.localeCompare(b.item.summary));
 			// Opt-in to-dos (Show on the printed week) for this day, as blank
 			// checkboxes to tick off on paper.
@@ -293,7 +375,8 @@ export class AgendaPanel extends BasePanel {
 		}
 
 		const legend = calendars.map((c) => ({ label: c.label, color: c.color }));
-		openPrintDocument(buildWeekHtml(days, legend, start));
+		const goals = this.ctx.plugin.weeklyGoalsFor(currentWeekKey()).map((g) => g.text);
+		openPrintDocument(buildWeekHtml(days, legend, start, goals));
 	}
 }
 
@@ -348,13 +431,19 @@ interface Legend {
 
 /** A self-contained, print-styled week-at-a-glance document. Calendar data is
  * untrusted, so every summary/location/label is HTML-escaped. */
-function buildWeekHtml(days: PrintDay[], legend: Legend[], weekStart: Date): string {
+function buildWeekHtml(days: PrintDay[], legend: Legend[], weekStart: Date, goals: string[]): string {
 	const weekEnd = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6);
 	const title = `${moment(weekStart).format("MMMM D")} – ${moment(weekEnd).format("MMMM D, YYYY")}`;
 
 	const legendHtml = legend.length
 		? `<div class="legend">${legend
 				.map((l) => `<span class="leg"><span class="dot" style="background:${l.color}"></span>${escapeHtml(l.label)}</span>`)
+				.join("")}</div>`
+		: "";
+
+	const goalsHtml = goals.length
+		? `<div class="goals"><span class="goals-h">This week's goals</span>${goals
+				.map((g) => `<span class="goal"><span class="todo-box"></span>${escapeHtml(g)}</span>`)
 				.join("")}</div>`
 		: "";
 
@@ -426,6 +515,9 @@ function buildWeekHtml(days: PrintDay[], legend: Legend[], weekStart: Date): str
 	.todo { display: flex; align-items: baseline; gap: 6px; font-size: 11px; }
 	.todo-box { flex: 0 0 auto; width: 9px; height: 9px; border: 1px solid #888; border-radius: 2px; align-self: center; }
 	.todo-text { font-weight: 500; }
+	.goals { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 10px; padding: 6px 8px; border: 1px solid #bbb; border-radius: 6px; font-size: 12px; }
+	.goals-h { font-weight: 700; }
+	.goal { display: inline-flex; align-items: center; gap: 6px; }
 	.write { flex: 1 1 auto; min-height: 22mm; background-image: repeating-linear-gradient(to bottom, transparent, transparent 6mm, #e2e2e2 6mm, #e2e2e2 calc(6mm + 1px)); }
 	.write.tall { min-height: 48mm; }
 	@media print { body { padding: 0; } @page { margin: 12mm; } }
@@ -433,6 +525,7 @@ function buildWeekHtml(days: PrintDay[], legend: Legend[], weekStart: Date): str
 <body>
 	<h1>Week at a glance</h1>
 	<div class="sub">${escapeHtml(title)}</div>
+	${goalsHtml}
 	${legendHtml}
 	<div class="grid">${dayCells}${notesCell}</div>
 </body></html>`;

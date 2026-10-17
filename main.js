@@ -29,10 +29,10 @@ __export(main_exports, {
   default: () => DailyDashPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian30 = require("obsidian");
+var import_obsidian44 = require("obsidian");
 
 // src/settings.ts
-var import_obsidian27 = require("obsidian");
+var import_obsidian40 = require("obsidian");
 
 // node_modules/dash-core/src/core/ics.ts
 var import_obsidian = require("obsidian");
@@ -332,6 +332,40 @@ async function fetchICS(url) {
   return res.text;
 }
 
+// node_modules/dash-core/src/core/agendamath.ts
+function agendaState(items, now) {
+  const timed = items.filter((i) => !i.allDay).sort((a, b) => a.startMs - b.startMs);
+  const inProgress = timed.filter((i) => i.endMs !== void 0 && i.startMs <= now && i.endMs > now).sort((a, b) => a.endMs - b.endMs)[0];
+  const nextEvent = timed.find((i) => i.startMs > now);
+  if (inProgress) {
+    const gapStart = inProgress.endMs;
+    return {
+      kind: "now",
+      summary: inProgress.summary,
+      untilMs: gapStart - now,
+      gapMs: nextEvent ? Math.max(0, nextEvent.startMs - gapStart) : void 0
+    };
+  }
+  if (nextEvent) {
+    return {
+      kind: "next",
+      summary: nextEvent.summary,
+      untilMs: nextEvent.startMs - now,
+      gapMs: nextEvent.startMs - now
+    };
+  }
+  return { kind: "clear" };
+}
+function formatGap(ms) {
+  const totalMin = Math.floor(Math.max(0, ms) / 6e4);
+  if (totalMin < 1) return "less than a minute";
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h}h`;
+  return `${m}m`;
+}
+
 // node_modules/dash-core/src/core/localevents.ts
 function localEventToAgendaItem(ev) {
   const [y, mo, d] = ev.date.split("-").map(Number);
@@ -365,6 +399,77 @@ function localEventToAgendaItem(ev) {
   };
 }
 
+// node_modules/dash-core/src/core/directivesserde.ts
+var DEFAULT_DIRECTIVES_HEADER = "%% Dashboard \u2014 persistent to-do list. Managed automatically; edit these in the dashboard, not here. %%";
+function buildMarkdown(items, header = DEFAULT_DIRECTIVES_HEADER) {
+  const body = items.length ? `{
+  "version": 1,
+  "todos": [
+${items.map((t) => "    " + JSON.stringify(t)).join(",\n")}
+  ]
+}` : `{
+  "version": 1,
+  "todos": []
+}`;
+  return `${header}
+
+\`\`\`json
+${body}
+\`\`\`
+`;
+}
+function jsonCandidates(raw) {
+  const out = [];
+  const fencedJson = raw.match(/```+\s*json\b\s*([\s\S]*?)```+/i);
+  if (fencedJson) out.push(fencedJson[1]);
+  const anyFence = raw.match(/```+[^\n]*\n([\s\S]*?)```+/);
+  if (anyFence) out.push(anyFence[1]);
+  const a = raw.indexOf("{");
+  const b = raw.lastIndexOf("}");
+  if (a >= 0 && b > a) out.push(raw.slice(a, b + 1));
+  out.push(raw);
+  return out;
+}
+function deSmarten(s) {
+  return s.replace(/[“”„‟«»]/g, '"').replace(/[‘’‚‛]/g, "'").replace(/ /g, " ");
+}
+function repairJson(s) {
+  let out = s.replace(/"(completions|skips)"\s*:\s*\[([\s\S]*?)\]/g, (_m, key, inner) => {
+    const dates = inner.match(/\d{4}-\d{2}-\d{2}/g) || [];
+    const uniq = [...new Set(dates)];
+    return `"${key}": [${uniq.map((d) => `"${d}"`).join(", ")}]`;
+  });
+  out = out.replace(/,(\s*,)+/g, ",");
+  out = out.replace(/,(\s*[\]}])/g, "$1");
+  out = out.replace(/"(\s*\n\s*)"/g, '",$1"');
+  return out;
+}
+function tryParseJson(raw) {
+  const candidates = jsonCandidates(raw);
+  for (let i = 0; i < candidates.length; i++) {
+    const desmartened = deSmarten(candidates[i]);
+    const variants = [candidates[i], desmartened, repairJson(desmartened)];
+    for (let v = 0; v < variants.length; v++) {
+      try {
+        return { value: JSON.parse(variants[v]), recovered: i > 0 || v > 0 };
+      } catch (e) {
+      }
+    }
+  }
+  return null;
+}
+function tryParseTodos(raw) {
+  var _a;
+  const r = tryParseJson(raw);
+  const todos = (_a = r == null ? void 0 : r.value) == null ? void 0 : _a.todos;
+  if (r && Array.isArray(todos)) return { ok: true, todos, recovered: r.recovered };
+  return { ok: false, todos: [] };
+}
+function unionById(onDisk, local) {
+  const seen = new Set(onDisk.map((t) => t.id));
+  return [...onDisk, ...local.filter((t) => !seen.has(t.id))];
+}
+
 // node_modules/dash-core/src/core/localeventsserde.ts
 var DEFAULT_LOCAL_EVENTS_HEADER = "%% Dashboard \u2014 local (dashboard-only) schedule events. Managed automatically; edit these in the dashboard, not here. %%";
 function isLocalEvent(e) {
@@ -373,23 +478,32 @@ function isLocalEvent(e) {
   return typeof r.id === "string" && typeof r.date === "string" && typeof r.summary === "string" && (r.start === void 0 || typeof r.start === "string") && (r.end === void 0 || typeof r.end === "string");
 }
 function buildLocalEventsMarkdown(events, header = DEFAULT_LOCAL_EVENTS_HEADER) {
-  const json = JSON.stringify({ version: 1, events }, null, 2);
+  const body = events.length ? `{
+  "version": 1,
+  "events": [
+${events.map((e) => "    " + JSON.stringify(e)).join(",\n")}
+  ]
+}` : `{
+  "version": 1,
+  "events": []
+}`;
   return `${header}
 
 \`\`\`json
-${json}
+${body}
 \`\`\`
 `;
 }
-function parseLocalEvents(raw) {
-  const fenced = raw.match(/```json\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : raw;
-  try {
-    const parsed = JSON.parse(candidate);
-    return Array.isArray(parsed == null ? void 0 : parsed.events) ? parsed.events.filter(isLocalEvent) : [];
-  } catch (e) {
-    return [];
-  }
+function tryParseLocalEvents(raw) {
+  var _a;
+  const r = tryParseJson(raw);
+  const events = (_a = r == null ? void 0 : r.value) == null ? void 0 : _a.events;
+  if (r && Array.isArray(events)) return { ok: true, events: events.filter(isLocalEvent) };
+  return { ok: false, events: [] };
+}
+function unionEventsById(onDisk, local) {
+  const seen = new Set(onDisk.map((e) => e.id));
+  return [...onDisk, ...local.filter((e) => !seen.has(e.id))];
 }
 
 // node_modules/dash-core/src/core/localeventsstore.ts
@@ -404,6 +518,10 @@ var LocalEventsFileStore = class {
     /** The exact text we last read from / wrote to disk, so a modify event
      * caused by our own write reloads to identical content and is ignored. */
     __publicField(this, "lastSerialized", "");
+    /** Same sync-safety guards as DirectivesStore: don't clobber an unreadable or
+     * not-yet-loaded file, and never CREATE an empty one. */
+    __publicField(this, "unreadable", false);
+    __publicField(this, "everLoaded", false);
   }
   getEvents() {
     return this.events;
@@ -423,9 +541,18 @@ var LocalEventsFileStore = class {
     if (!(file instanceof import_obsidian2.TFile)) return false;
     try {
       const raw = await this.app.vault.read(file);
-      this.lastSerialized = raw;
-      this.events = parseLocalEvents(raw);
+      const res = tryParseLocalEvents(raw);
+      if (res.ok) {
+        this.events = this.everLoaded ? res.events : unionEventsById(res.events, this.events);
+        this.lastSerialized = raw;
+        this.unreadable = false;
+        this.everLoaded = true;
+      } else {
+        this.unreadable = true;
+        console.error("dash-core: local-events file did not parse \u2014 preserving it and refusing to overwrite.");
+      }
     } catch (e) {
+      this.unreadable = true;
       console.error("dash-core: could not read the local-events file", e);
     }
     return true;
@@ -460,17 +587,35 @@ var LocalEventsFileStore = class {
   /** Write the current events to the Markdown file (creating it and its folder
    * if needed). No-op when the content is unchanged. */
   async save() {
+    if (this.unreadable) return;
+    if (!this.everLoaded) {
+      const existing2 = this.app.vault.getAbstractFileByPath(this.path());
+      if (existing2 instanceof import_obsidian2.TFile) {
+        try {
+          const res = tryParseLocalEvents(await this.app.vault.read(existing2));
+          if (res.ok) this.events = unionEventsById(res.events, this.events);
+          else {
+            this.unreadable = true;
+            return;
+          }
+        } catch (e) {
+          return;
+        }
+      }
+    }
     const body = buildLocalEventsMarkdown(this.events, this.opts.header);
     if (body === this.lastSerialized) return;
-    this.lastSerialized = body;
     const path = this.path();
     const existing = this.app.vault.getAbstractFileByPath(path);
+    if (!(existing instanceof import_obsidian2.TFile) && this.events.length === 0) return;
+    this.lastSerialized = body;
     if (existing instanceof import_obsidian2.TFile) {
       await this.app.vault.modify(existing, body);
     } else {
       await this.ensureFolder(path);
       await this.app.vault.create(path, body);
     }
+    this.everLoaded = true;
   }
   /** React to a vault change on the events file (e.g. Obsidian Sync landing the
    * other device's edit). Returns true if the in-memory list actually changed —
@@ -657,6 +802,39 @@ function minimalDiff(a, b) {
 async function writeDailyField(app, spec, body) {
   await editDailyNote(app, (content) => replaceField(content, spec, body));
 }
+async function writeDailyFieldOrCreate(app, spec, body, heading) {
+  await editDailyNote(app, (content) => {
+    if (content.split("\n").some((l) => spec.anchor.test(l))) return replaceField(content, spec, body);
+    if (!body.trim()) return content;
+    const trimmed = content.replace(/\s+$/, "");
+    const section = `## ${heading}
+
+${body.trim()}
+`;
+    return trimmed ? `${trimmed}
+
+${section}` : section;
+  });
+}
+async function appendToDailyField(app, spec, text, ensureHeading) {
+  const clean = text.trim();
+  if (!clean) return false;
+  const file = getDailyNoteFile(app);
+  if (file) {
+    const raw = await readDailyNoteRaw(app);
+    if (!raw.split("\n").some((l) => spec.anchor.test(l))) {
+      if (!ensureHeading) return false;
+      await writeDailyFieldOrCreate(app, spec, clean, ensureHeading);
+      return true;
+    }
+  }
+  const current = await readDailyField(app, spec);
+  const next = current ? `${current}
+${clean}` : clean;
+  if (ensureHeading) await writeDailyFieldOrCreate(app, spec, next, ensureHeading);
+  else await writeDailyField(app, spec, next);
+  return true;
+}
 async function readDailyField(app, spec) {
   const file = getDailyNoteFile(app);
   if (!file) return "";
@@ -664,8 +842,8 @@ async function readDailyField(app, spec) {
   const content = view ? view.editor.getValue() : await app.vault.cachedRead(file);
   return readField(content, spec);
 }
-async function appendDailyLogLine(app, line, opts) {
-  await editDailyNote(app, (content) => insertLogLine(content, line, opts));
+async function appendDailyLogLine(app, line, opts, date) {
+  await editDailyNote(app, (content) => insertLogLine(content, line, opts), date);
 }
 function readHeadingSection(content, heading) {
   return readField(content, headingField(heading));
@@ -675,6 +853,25 @@ async function readDailyNoteRaw(app, date) {
   if (!file) return "";
   const view = openEditorFor(app, file);
   return view ? view.editor.getValue() : app.vault.cachedRead(file);
+}
+function readMarkerLogLines(content, marker, heading) {
+  const lines = content.split("\n");
+  let anchor = lines.findIndex((l) => l.includes(marker));
+  if (anchor === -1 && heading) {
+    const h = heading.trim().toLowerCase().replace(/:$/, "");
+    anchor = lines.findIndex((l) => {
+      const m = l.match(/^#{1,6}\s+(.*?)\s*$/);
+      return !!m && m[1].trim().toLowerCase().replace(/:$/, "") === h;
+    });
+  }
+  if (anchor === -1) return [];
+  const out = [];
+  for (let i = anchor + 1; i < lines.length; i++) {
+    if (HEADING_RE.test(lines[i])) break;
+    if (/^- \d{2}:\d{2}\b/.test(lines[i])) out.push(lines[i]);
+    else if (lines[i].includes("%%") && !lines[i].includes(marker)) break;
+  }
+  return out;
 }
 
 // node_modules/dash-core/src/core/todostore.ts
@@ -1074,28 +1271,6 @@ function allSubItemsDone(item, date) {
   return subs.length > 0 && subs.every((s) => subItemDone(item, s.id, date));
 }
 
-// node_modules/dash-core/src/core/directivesserde.ts
-var DEFAULT_DIRECTIVES_HEADER = "%% Dashboard \u2014 persistent to-do list. Managed automatically; edit these in the dashboard, not here. %%";
-function buildMarkdown(items, header = DEFAULT_DIRECTIVES_HEADER) {
-  const json = JSON.stringify({ version: 1, todos: items }, null, 2);
-  return `${header}
-
-\`\`\`json
-${json}
-\`\`\`
-`;
-}
-function parseTodos(raw) {
-  const fenced = raw.match(/```json\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : raw;
-  try {
-    const parsed = JSON.parse(candidate);
-    return Array.isArray(parsed == null ? void 0 : parsed.todos) ? parsed.todos : [];
-  } catch (e) {
-    return [];
-  }
-}
-
 // node_modules/dash-core/src/core/directivesstore.ts
 var import_obsidian5 = require("obsidian");
 var DEFAULT_PATH2 = "Dashboard/Directives.md";
@@ -1108,12 +1283,37 @@ var DirectivesStore = class {
     /** The exact text we last read from / wrote to disk, so a modify event
      * caused by our own write reloads to identical content and is ignored. */
     __publicField(this, "lastSerialized", "");
+    /** True when the file exists but didn't parse (corrupt / mid-sync). While set,
+     * we never overwrite it — protecting the on-disk list from being clobbered by
+     * an accidental empty save. Cleared on the next successful read. */
+    __publicField(this, "unreadable", false);
+    /** True once we have actually READ an existing on-disk file (or created a fresh
+     * one). Until then a save must not blindly overwrite: on a secondary device the
+     * real file may simply not have synced into the vault index yet, and writing our
+     * (empty / just-added) list would clobber it once Sync lands it. See `save()`. */
+    __publicField(this, "everLoaded", false);
+    /** Until this timestamp, refuse to CREATE the file when it's absent — a fresh
+     * install and a still-downloading synced vault are indistinguishable at startup,
+     * so we give Sync a window to deliver the real file before we'd mint a rival
+     * (empty/just-added) copy that clobbers it. Set by the host on a fileless start. */
+    __publicField(this, "graceUntil", 0);
+    /** Last load outcome, for the diagnostics command. */
+    __publicField(this, "lastStatus", "not loaded yet");
   }
   getItems() {
     return this.items;
   }
   setItems(items) {
     this.items = items;
+  }
+  /** Whether an on-disk file has been read this session. */
+  hasLoaded() {
+    return this.everLoaded;
+  }
+  /** Defer CREATING the file for `ms` when it's absent at startup, so a syncing
+   * copy can land first. No effect once the file has loaded. */
+  deferCreateFor(ms) {
+    this.graceUntil = Date.now() + ms;
   }
   /** The Markdown file the directives live in. Any configured extension is
    * coerced to `.md` so the file always syncs. */
@@ -1128,18 +1328,84 @@ var DirectivesStore = class {
   isDirectivesPath(path) {
     return (0, import_obsidian5.normalizePath)(path) === this.path();
   }
-  /** Load from the Markdown file. Returns true if the file existed. */
+  /** Load from the Markdown file. Returns true if the file existed. Heals a file
+   * that is empty OR unparseable when this device has a known-good list to restore
+   * from (memory this session, or the persisted per-device backup) — so a wipe or
+   * a corrupting reformat can't erase the list; it is rewritten intact. */
   async load() {
-    const file = this.app.vault.getAbstractFileByPath(this.path());
-    if (!(file instanceof import_obsidian5.TFile)) return false;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    const path = this.path();
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof import_obsidian5.TFile)) {
+      this.lastStatus = `no file at "${path}"`;
+      return false;
+    }
+    let raw;
     try {
-      const raw = await this.app.vault.read(file);
-      this.lastSerialized = raw;
-      this.items = parseTodos(raw);
+      raw = await this.app.vault.read(file);
     } catch (e) {
+      this.unreadable = true;
+      this.lastStatus = `read error at "${path}": ${e.message}`;
       console.error("dash-core: could not read the directives file", e);
+      return true;
+    }
+    const res = tryParseTodos(raw);
+    const emptyOrBroken = !res.ok || res.todos.length === 0;
+    if (emptyOrBroken) {
+      const restore = this.items.length > 0 ? this.items : (_c = (_b = (_a = this.opts).getBackup) == null ? void 0 : _b.call(_a)) != null ? _c : [];
+      const seenReal = this.everLoaded || !!((_e = (_d = this.opts).hasSeenFile) == null ? void 0 : _e.call(_d));
+      if (restore.length > 0 && seenReal) {
+        console.warn(`dash-core: directives file ${res.ok ? "was empty" : "did not parse"} but this device holds a real list \u2014 healing it (${restore.length} items).`);
+        this.items = restore.map((t) => ({ ...t }));
+        this.unreadable = false;
+        this.everLoaded = true;
+        (_g = (_f = this.opts).markSeenFile) == null ? void 0 : _g.call(_f);
+        (_i = (_h = this.opts).setBackup) == null ? void 0 : _i.call(_h, this.items);
+        this.lastSerialized = "";
+        await this.save();
+        this.lastStatus = `healed ${res.ok ? "empty" : "unparseable"} file \u2192 ${this.items.length} items`;
+        return true;
+      }
+      if (!res.ok) {
+        this.unreadable = true;
+        this.lastStatus = `unparseable file at "${path}" (${raw.length} bytes), no backup to heal from`;
+        console.error("dash-core: directives file did not parse \u2014 preserving it and refusing to overwrite.");
+        return true;
+      }
+    }
+    this.items = this.everLoaded ? res.todos : unionById(res.todos, this.items);
+    this.lastSerialized = raw;
+    this.unreadable = false;
+    this.everLoaded = true;
+    (_k = (_j = this.opts).markSeenFile) == null ? void 0 : _k.call(_j);
+    if (this.items.length > 0) (_m = (_l = this.opts).setBackup) == null ? void 0 : _m.call(_l, this.items);
+    this.lastStatus = `loaded ${this.items.length} items from "${path}"`;
+    if (res.recovered && this.items.length > 0) {
+      console.warn("dash-core: recovered a mangled directives file \u2014 rewriting it in clean canonical form.");
+      this.lastSerialized = "";
+      await this.save();
+      this.lastStatus = `recovered + healed \u2192 ${this.items.length} items`;
     }
     return true;
+  }
+  /** If we still haven't loaded a file and none exists on disk, but this device
+   * has a non-empty backup, recreate the file from it. Covers a directives file
+   * that was deleted or moved out from under us. Returns true if it recreated. */
+  async ensureFromBackup() {
+    var _a, _b, _c;
+    if (this.everLoaded) return false;
+    if (this.app.vault.getAbstractFileByPath(this.path()) instanceof import_obsidian5.TFile) return false;
+    const backup = (_c = (_b = (_a = this.opts).getBackup) == null ? void 0 : _b.call(_a)) != null ? _c : [];
+    if (backup.length === 0) return false;
+    console.warn(`dash-core: no directives file on disk \u2014 recreating from backup (${backup.length} items).`);
+    this.items = backup.map((t) => ({ ...t }));
+    await this.save();
+    this.lastStatus = `recreated file from backup \u2192 ${this.items.length} items`;
+    return true;
+  }
+  /** Whether the store is currently protecting an unreadable file. */
+  isUnreadable() {
+    return this.unreadable;
   }
   /** Migrate from the old `.json` file if it exists. Returns true if migrated. */
   async loadLegacyJson() {
@@ -1147,7 +1413,10 @@ var DirectivesStore = class {
     if (!(file instanceof import_obsidian5.TFile)) return false;
     try {
       const raw = await this.app.vault.read(file);
-      this.items = parseTodos(raw);
+      const res = tryParseTodos(raw);
+      if (!res.ok) return false;
+      this.items = res.todos;
+      this.everLoaded = true;
       this.lastSerialized = "";
       return true;
     } catch (e) {
@@ -1158,17 +1427,48 @@ var DirectivesStore = class {
   /** Write the current list to the Markdown file (creating it and its folder if
    * needed). No-op when the content is unchanged. */
   async save() {
+    var _a, _b, _c, _d, _e, _f;
+    if (this.unreadable) {
+      console.warn("dash-core: skipping directives save \u2014 last read was unreadable (protecting the file).");
+      return;
+    }
+    if (!this.everLoaded) {
+      const existing2 = this.app.vault.getAbstractFileByPath(this.path());
+      if (existing2 instanceof import_obsidian5.TFile) {
+        try {
+          const res = tryParseTodos(await this.app.vault.read(existing2));
+          if (res.ok) this.items = unionById(res.todos, this.items);
+          else {
+            this.unreadable = true;
+            console.warn("dash-core: directives file appeared but didn't parse on save \u2014 preserving it.");
+            return;
+          }
+        } catch (e) {
+          console.error("dash-core: could not re-read directives before save \u2014 preserving the file.", e);
+          return;
+        }
+      } else if (((_b = (_a = this.opts).hasSeenFile) == null ? void 0 : _b.call(_a)) || Date.now() < this.graceUntil) {
+        console.warn("dash-core: directives file not present yet \u2014 deferring create to protect a possibly-syncing copy.");
+        return;
+      }
+    }
     const body = buildMarkdown(this.items, this.opts.header);
     if (body === this.lastSerialized) return;
-    this.lastSerialized = body;
     const path = this.path();
     const existing = this.app.vault.getAbstractFileByPath(path);
+    if (!(existing instanceof import_obsidian5.TFile) && this.items.length === 0) {
+      return;
+    }
+    this.lastSerialized = body;
     if (existing instanceof import_obsidian5.TFile) {
       await this.app.vault.modify(existing, body);
     } else {
       await this.ensureFolder(path);
       await this.app.vault.create(path, body);
     }
+    this.everLoaded = true;
+    (_d = (_c = this.opts).markSeenFile) == null ? void 0 : _d.call(_c);
+    (_f = (_e = this.opts).setBackup) == null ? void 0 : _f.call(_e, this.items);
   }
   /** React to a vault change on the directives file (e.g. Obsidian Sync landing
    * the other device's edit). Returns true if the in-memory list actually
@@ -1188,27 +1488,337 @@ var DirectivesStore = class {
   }
 };
 
-// node_modules/dash-core/src/core/library.ts
+// node_modules/dash-core/src/core/aicredsserde.ts
+var DEFAULT_AI_CREDS_HEADER = "%% Dashboard \u2014 AI credentials (synced secret). Managed automatically; edit the key in the dashboard settings, not here. Keep this file out of version control. %%";
+function buildAICredsMarkdown(creds, header = DEFAULT_AI_CREDS_HEADER) {
+  var _a;
+  const file = { version: 1, apiKey: (_a = creds.apiKey) != null ? _a : "" };
+  if (creds.baseUrl) file.baseUrl = creds.baseUrl;
+  return `${header}
+
+\`\`\`json
+${JSON.stringify(file)}
+\`\`\`
+`;
+}
+function tryParseAICreds(raw) {
+  const r = tryParseJson(raw);
+  const v = r == null ? void 0 : r.value;
+  if (r && v && typeof v.apiKey === "string") {
+    return { ok: true, creds: { apiKey: v.apiKey, baseUrl: typeof v.baseUrl === "string" ? v.baseUrl : void 0 } };
+  }
+  return { ok: false, creds: { apiKey: "" } };
+}
+
+// node_modules/dash-core/src/core/aicredsstore.ts
 var import_obsidian6 = require("obsidian");
+var DEFAULT_PATH3 = "MERIDIAN/AI Credentials.md";
+var AICredsStore = class {
+  constructor(app, getPath, opts = {}) {
+    this.app = app;
+    this.getPath = getPath;
+    this.opts = opts;
+    __publicField(this, "creds", { apiKey: "" });
+    /** Exact text last read/written, so our own writes reload to identical content. */
+    __publicField(this, "lastSerialized", "");
+    /** File exists but didn't parse (corrupt / mid-sync) — never overwrite while set. */
+    __publicField(this, "unreadable", false);
+    /** True once a real file has been read (or written) this session. */
+    __publicField(this, "everLoaded", false);
+  }
+  get() {
+    return this.creds;
+  }
+  getApiKey() {
+    var _a;
+    return (_a = this.creds.apiKey) != null ? _a : "";
+  }
+  getBaseUrl() {
+    return this.creds.baseUrl;
+  }
+  hasLoaded() {
+    return this.everLoaded;
+  }
+  /** The Markdown file the credentials live in. Any extension is coerced to `.md`
+   * so the file always syncs. */
+  path() {
+    const raw = (this.getPath() || this.opts.defaultPath || DEFAULT_PATH3).trim();
+    return (0, import_obsidian6.normalizePath)(raw.replace(/\.[^./]+$/, "") + ".md");
+  }
+  isCredsPath(path) {
+    return (0, import_obsidian6.normalizePath)(path) === this.path();
+  }
+  /** Load from the Markdown file. Returns true if the file existed. An empty key
+   * in the file is a legitimate state (the user cleared it on another device). */
+  async load() {
+    const file = this.app.vault.getAbstractFileByPath(this.path());
+    if (!(file instanceof import_obsidian6.TFile)) return false;
+    try {
+      const raw = await this.app.vault.read(file);
+      const res = tryParseAICreds(raw);
+      if (res.ok) {
+        this.creds = res.creds;
+        this.lastSerialized = raw;
+        this.unreadable = false;
+        this.everLoaded = true;
+      } else {
+        this.unreadable = true;
+        console.error("dash-core: AI credentials file did not parse \u2014 preserving it and refusing to overwrite.");
+      }
+    } catch (e) {
+      this.unreadable = true;
+      console.error("dash-core: could not read the AI credentials file", e);
+    }
+    return true;
+  }
+  /** One-time migration seed from the key that used to live in `data.json`.
+   * Writes the file only when there's a real key and no synced file has landed
+   * yet — so an existing device's key becomes the synced source of truth without
+   * ever originating an empty file. */
+  async seedFrom(apiKey, baseUrl) {
+    if (!apiKey) return;
+    if (this.everLoaded && this.creds.apiKey) return;
+    if (this.app.vault.getAbstractFileByPath(this.path()) instanceof import_obsidian6.TFile) {
+      await this.load();
+      if (this.creds.apiKey) return;
+    }
+    this.creds = { apiKey, baseUrl: baseUrl || void 0 };
+    this.lastSerialized = "";
+    await this.writeFile();
+  }
+  /** A deliberate user edit in settings. Persists whatever the user typed —
+   * INCLUDING an empty key to clear it — but still never CREATES the file for an
+   * empty key (nothing to store, and an auto/startup path must never mint one). */
+  async setFromSettings(apiKey, baseUrl) {
+    this.creds = { apiKey: apiKey != null ? apiKey : "", baseUrl: baseUrl || void 0 };
+    const existing = this.app.vault.getAbstractFileByPath(this.path());
+    if (!(existing instanceof import_obsidian6.TFile) && !this.creds.apiKey) {
+      this.lastSerialized = "";
+      return;
+    }
+    this.unreadable = false;
+    this.lastSerialized = "";
+    await this.writeFile();
+  }
+  /** React to a vault change on the credentials file (Sync landing another
+   * device's edit). Returns true if the in-memory key actually changed. */
+  async onExternalChange(path) {
+    if (!this.isCredsPath(path)) return false;
+    const before = this.lastSerialized;
+    await this.load();
+    return this.lastSerialized !== before;
+  }
+  /** Write the current credentials out. No-op when unchanged. Never creates the
+   * file for an empty key; refuses while the file is unreadable. */
+  async writeFile() {
+    if (this.unreadable) return;
+    const body = buildAICredsMarkdown(this.creds, this.opts.header);
+    if (body === this.lastSerialized) return;
+    const path = this.path();
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    if (!(existing instanceof import_obsidian6.TFile) && !this.creds.apiKey) return;
+    this.lastSerialized = body;
+    if (existing instanceof import_obsidian6.TFile) {
+      await this.app.vault.modify(existing, body);
+    } else {
+      await this.ensureFolder(path);
+      await this.app.vault.create(path, body);
+    }
+    this.everLoaded = true;
+  }
+  async ensureFolder(path) {
+    const dir = path.split("/").slice(0, -1).join("/");
+    if (!dir) return;
+    if (this.app.vault.getAbstractFileByPath(dir) instanceof import_obsidian6.TFolder) return;
+    await this.app.vault.createFolder(dir).catch(() => {
+    });
+  }
+};
+
+// node_modules/dash-core/src/core/layoutserde.ts
+var DEFAULT_LAYOUT_HEADER = "%% Dashboard \u2014 layout (synced). Mobile tabs, card assignments, and panel order/columns. Managed automatically; edit it in the dashboard settings, not here. %%";
+function buildLayoutMarkdown(layout, header = DEFAULT_LAYOUT_HEADER) {
+  const file = { version: 1, ...layout };
+  return `${header}
+
+\`\`\`json
+${JSON.stringify(file)}
+\`\`\`
+`;
+}
+function tryParseLayout(raw) {
+  const r = tryParseJson(raw);
+  const v = r == null ? void 0 : r.value;
+  if (!r || !v || typeof v !== "object" || Array.isArray(v)) return { ok: false, layout: {} };
+  const o = v;
+  const layout = {};
+  if (typeof o.mobileTabs === "boolean") layout.mobileTabs = o.mobileTabs;
+  if (Array.isArray(o.tabs)) {
+    layout.tabs = o.tabs.filter((t) => !!t && typeof t.id === "string" && typeof t.name === "string").map((t) => ({ id: t.id, name: t.name }));
+  }
+  if (o.tabAssignments && typeof o.tabAssignments === "object") {
+    layout.tabAssignments = {};
+    for (const [k, val] of Object.entries(o.tabAssignments)) if (typeof val === "string") layout.tabAssignments[k] = val;
+  }
+  if (typeof o.defaultTabId === "string" || o.defaultTabId === null) layout.defaultTabId = o.defaultTabId;
+  if (Array.isArray(o.panelOrder)) layout.panelOrder = o.panelOrder.filter((p) => typeof p === "string");
+  if (o.enabledPanels && typeof o.enabledPanels === "object") {
+    layout.enabledPanels = {};
+    for (const [k, val] of Object.entries(o.enabledPanels)) if (typeof val === "boolean") layout.enabledPanels[k] = val;
+  }
+  layout.panelColumns = pickNumberMap(o.panelColumns);
+  layout.panelSpans = pickNumberMap(o.panelSpans);
+  if (!layout.panelColumns) delete layout.panelColumns;
+  if (!layout.panelSpans) delete layout.panelSpans;
+  return { ok: true, layout };
+}
+function pickNumberMap(map) {
+  if (!map || typeof map !== "object") return void 0;
+  const out = {};
+  for (const [k, v] of Object.entries(map)) if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+  return Object.keys(out).length ? out : void 0;
+}
+function layoutHasContent(layout) {
+  var _a, _b, _c, _d, _e, _f, _g, _h;
+  return ((_b = (_a = layout.tabs) == null ? void 0 : _a.length) != null ? _b : 0) > 0 || Object.keys((_c = layout.tabAssignments) != null ? _c : {}).length > 0 || ((_e = (_d = layout.panelOrder) == null ? void 0 : _d.length) != null ? _e : 0) > 0 || Object.keys((_f = layout.enabledPanels) != null ? _f : {}).length > 0 || Object.keys((_g = layout.panelColumns) != null ? _g : {}).length > 0 || Object.keys((_h = layout.panelSpans) != null ? _h : {}).length > 0;
+}
+
+// node_modules/dash-core/src/core/layoutstore.ts
+var import_obsidian7 = require("obsidian");
+var DEFAULT_PATH4 = "MERIDIAN/Dashboard Layout.md";
+var LayoutStore = class {
+  constructor(app, getPath, opts = {}) {
+    this.app = app;
+    this.getPath = getPath;
+    this.opts = opts;
+    __publicField(this, "layout", {});
+    /** Exact text last read/written, so our own writes reload to identical content. */
+    __publicField(this, "lastSerialized", "");
+    /** File exists but didn't parse (corrupt / mid-sync) — never overwrite while set. */
+    __publicField(this, "unreadable", false);
+    /** True once a real file has been read (or written) this session. */
+    __publicField(this, "everLoaded", false);
+  }
+  get() {
+    return this.layout;
+  }
+  hasLoaded() {
+    return this.everLoaded;
+  }
+  /** The Markdown file the layout lives in. Any extension is coerced to `.md`
+   * so the file always syncs. */
+  path() {
+    const raw = (this.getPath() || this.opts.defaultPath || DEFAULT_PATH4).trim();
+    return (0, import_obsidian7.normalizePath)(raw.replace(/\.[^./]+$/, "") + ".md");
+  }
+  isLayoutPath(path) {
+    return (0, import_obsidian7.normalizePath)(path) === this.path();
+  }
+  /** Load from the Markdown file. Returns true if the file existed. */
+  async load() {
+    const file = this.app.vault.getAbstractFileByPath(this.path());
+    if (!(file instanceof import_obsidian7.TFile)) return false;
+    try {
+      const raw = await this.app.vault.read(file);
+      const res = tryParseLayout(raw);
+      if (res.ok) {
+        this.layout = res.layout;
+        this.lastSerialized = raw;
+        this.unreadable = false;
+        this.everLoaded = true;
+      } else {
+        this.unreadable = true;
+        console.error("dash-core: dashboard layout file did not parse \u2014 preserving it and refusing to overwrite.");
+      }
+    } catch (e) {
+      this.unreadable = true;
+      console.error("dash-core: could not read the dashboard layout file", e);
+    }
+    return true;
+  }
+  /** One-time migration seed from the layout that used to live in `data.json`.
+   * Writes the file only when there's real layout content and no synced file has
+   * landed yet — so an existing device's config becomes the synced source of
+   * truth without ever originating an empty file. */
+  async seedFrom(layout) {
+    if (!layoutHasContent(layout)) return;
+    if (this.everLoaded && layoutHasContent(this.layout)) return;
+    if (this.app.vault.getAbstractFileByPath(this.path()) instanceof import_obsidian7.TFile) {
+      await this.load();
+      if (layoutHasContent(this.layout)) return;
+    }
+    this.layout = layout;
+    this.lastSerialized = "";
+    await this.writeFile(true);
+  }
+  /** A deliberate user edit in settings. Persists whatever the layout now is —
+   * creating the file if needed (the user is actively configuring the layout, so
+   * the synced file should exist from here on). */
+  async setFromSettings(layout) {
+    this.layout = layout;
+    this.unreadable = false;
+    this.lastSerialized = "";
+    await this.writeFile(true);
+  }
+  /** React to a vault change on the layout file (Sync landing another device's
+   * edit). Returns true if the in-memory layout actually changed. */
+  async onExternalChange(path) {
+    if (!this.isLayoutPath(path)) return false;
+    const before = this.lastSerialized;
+    await this.load();
+    return this.lastSerialized !== before;
+  }
+  /** Write the current layout out. No-op when unchanged. Refuses while the file
+   * is unreadable. When `create` is false, never mints a missing file. */
+  async writeFile(create) {
+    if (this.unreadable) return;
+    const body = buildLayoutMarkdown(this.layout, this.opts.header);
+    if (body === this.lastSerialized) return;
+    const path = this.path();
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    if (!(existing instanceof import_obsidian7.TFile) && !create) return;
+    this.lastSerialized = body;
+    if (existing instanceof import_obsidian7.TFile) {
+      await this.app.vault.modify(existing, body);
+    } else {
+      await this.ensureFolder(path);
+      await this.app.vault.create(path, body);
+    }
+    this.everLoaded = true;
+  }
+  async ensureFolder(path) {
+    const dir = path.split("/").slice(0, -1).join("/");
+    if (!dir) return;
+    if (this.app.vault.getAbstractFileByPath(dir) instanceof import_obsidian7.TFolder) return;
+    await this.app.vault.createFolder(dir).catch(() => {
+    });
+  }
+};
+
+// node_modules/dash-core/src/core/jsonliststore.ts
+var import_obsidian8 = require("obsidian");
+
+// node_modules/dash-core/src/core/library.ts
+var import_obsidian9 = require("obsidian");
 var LibraryStore = class {
   constructor(app, cfg) {
     this.app = app;
     this.cfg = cfg;
   }
   root() {
-    return (0, import_obsidian6.normalizePath)((this.cfg().root || "Library").replace(/\/+$/, ""));
+    return (0, import_obsidian9.normalizePath)((this.cfg().root || "Library").replace(/\/+$/, ""));
   }
   /** Folder new/active notes live in. */
   notesFolder() {
     var _a;
     const sub = ((_a = this.cfg().notesSubfolder) != null ? _a : "").trim().replace(/\/+$/, "");
-    return sub ? (0, import_obsidian6.normalizePath)(this.root() + "/" + sub) : this.root();
+    return sub ? (0, import_obsidian9.normalizePath)(this.root() + "/" + sub) : this.root();
   }
   categoriesFolder() {
-    return (0, import_obsidian6.normalizePath)(this.root() + "/" + (this.cfg().categoriesSubfolder || "Categories"));
+    return (0, import_obsidian9.normalizePath)(this.root() + "/" + (this.cfg().categoriesSubfolder || "Categories"));
   }
   archiveFolder() {
-    return (0, import_obsidian6.normalizePath)(this.root() + "/" + (this.cfg().archiveSubfolder || "Archive"));
+    return (0, import_obsidian9.normalizePath)(this.root() + "/" + (this.cfg().archiveSubfolder || "Archive"));
   }
   heading() {
     return (this.cfg().listHeading || "Notes").trim();
@@ -1250,14 +1860,14 @@ var LibraryStore = class {
   }
   // ----------------------------------------------------------- mutations
   async ensureFolder(path) {
-    const norm = (0, import_obsidian6.normalizePath)(path);
+    const norm = (0, import_obsidian9.normalizePath)(path);
     if (!norm || norm === "/") return;
-    if (this.app.vault.getAbstractFileByPath(norm) instanceof import_obsidian6.TFolder) return;
+    if (this.app.vault.getAbstractFileByPath(norm) instanceof import_obsidian9.TFolder) return;
     const parts = norm.split("/");
     let cur = "";
     for (const p of parts) {
       cur = cur ? cur + "/" + p : p;
-      if (!(this.app.vault.getAbstractFileByPath(cur) instanceof import_obsidian6.TFolder)) {
+      if (!(this.app.vault.getAbstractFileByPath(cur) instanceof import_obsidian9.TFolder)) {
         await this.app.vault.createFolder(cur).catch(() => {
         });
       }
@@ -1269,20 +1879,20 @@ var LibraryStore = class {
   uniquePath(folder, base) {
     let name = base;
     for (let i = 1; i < 1e3; i++) {
-      const path = (0, import_obsidian6.normalizePath)(`${folder}/${name}.md`);
+      const path = (0, import_obsidian9.normalizePath)(`${folder}/${name}.md`);
       if (!this.app.vault.getAbstractFileByPath(path)) return path;
       name = `${base} ${i + 1}`;
     }
-    return (0, import_obsidian6.normalizePath)(`${folder}/${base} ${Date.now()}.md`);
+    return (0, import_obsidian9.normalizePath)(`${folder}/${base} ${Date.now()}.md`);
   }
   /** Create a category note (with the list heading) if it doesn't exist. */
   async createCategory(name) {
     const clean = this.sanitize(name);
     await this.ensureFolder(this.categoriesFolder());
     const existing = this.app.vault.getAbstractFileByPath(
-      (0, import_obsidian6.normalizePath)(`${this.categoriesFolder()}/${clean}.md`)
+      (0, import_obsidian9.normalizePath)(`${this.categoriesFolder()}/${clean}.md`)
     );
-    if (existing instanceof import_obsidian6.TFile) return existing;
+    if (existing instanceof import_obsidian9.TFile) return existing;
     const body = `---
 type: category
 ---
@@ -1328,9 +1938,9 @@ type: category
   }
   async unassign(file, category) {
     const catFile = this.app.vault.getAbstractFileByPath(
-      (0, import_obsidian6.normalizePath)(`${this.categoriesFolder()}/${this.sanitize(category)}.md`)
+      (0, import_obsidian9.normalizePath)(`${this.categoriesFolder()}/${this.sanitize(category)}.md`)
     );
-    if (catFile instanceof import_obsidian6.TFile) await this.removeMember(catFile, file.basename);
+    if (catFile instanceof import_obsidian9.TFile) await this.removeMember(catFile, file.basename);
     await this.app.fileManager.processFrontMatter(file, (fm) => {
       if (Array.isArray(fm.categories)) {
         fm.categories = fm.categories.map(String).filter((c) => c !== category);
@@ -1346,7 +1956,7 @@ type: category
       await this.removeMember(cat.file, file.basename);
     }
     await this.ensureFolder(this.archiveFolder());
-    let dest = (0, import_obsidian6.normalizePath)(`${this.archiveFolder()}/${file.name}`);
+    let dest = (0, import_obsidian9.normalizePath)(`${this.archiveFolder()}/${file.name}`);
     if (this.app.vault.getAbstractFileByPath(dest)) {
       dest = this.uniquePath(this.archiveFolder(), file.basename);
     }
@@ -1357,7 +1967,7 @@ type: category
   }
   async restoreNote(file) {
     await this.ensureFolder(this.notesFolder());
-    let dest = (0, import_obsidian6.normalizePath)(`${this.notesFolder()}/${file.name}`);
+    let dest = (0, import_obsidian9.normalizePath)(`${this.notesFolder()}/${file.name}`);
     if (this.app.vault.getAbstractFileByPath(dest)) {
       dest = this.uniquePath(this.notesFolder(), file.basename);
     }
@@ -1488,17 +2098,96 @@ function placard(el, title) {
   return head;
 }
 
+// node_modules/dash-core/src/panels/layout.ts
+var MAX_COLUMNS = 3;
+function clampInt(v, lo, hi) {
+  const n = Math.floor(Number.isFinite(v) ? v : lo);
+  return Math.max(lo, Math.min(hi, n));
+}
+function computeLayout(order, enabled, columns, spans) {
+  const ids = order.filter((id) => enabled[id] !== false);
+  const raw = ids.map((id) => {
+    var _a, _b;
+    return {
+      id,
+      col: clampInt((_a = columns[id]) != null ? _a : 1, 1, MAX_COLUMNS),
+      span: clampInt((_b = spans[id]) != null ? _b : 1, 1, MAX_COLUMNS)
+    };
+  });
+  const configured = raw.some((p) => p.col > 1 || p.span > 1);
+  if (!configured) {
+    return { configured: false, columns: 1, placements: ids.map((id) => ({ id, column: 1, span: 1 })) };
+  }
+  let N = 1;
+  for (const p of raw) N = Math.max(N, p.col + p.span - 1);
+  N = Math.min(MAX_COLUMNS, Math.max(1, N));
+  const placements = raw.map((p) => {
+    const column = p.col > N ? 1 : p.col;
+    const span = Math.max(1, Math.min(p.span, N - column + 1));
+    return { id: p.id, column, span };
+  });
+  return { configured: true, columns: N, placements };
+}
+
 // node_modules/dash-core/src/panels/promptmodal.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian10 = require("obsidian");
+var PromptModal = class extends import_obsidian10.Modal {
+  constructor(app, opts, onSubmit) {
+    var _a;
+    super(app);
+    this.opts = opts;
+    this.onSubmit = onSubmit;
+    __publicField(this, "value");
+    this.value = (_a = opts.initial) != null ? _a : "";
+  }
+  onOpen() {
+    this.titleEl.setText(this.opts.title);
+    const setting = new import_obsidian10.Setting(this.contentEl);
+    if (this.opts.multiline) {
+      setting.addTextArea((t) => {
+        var _a;
+        t.setPlaceholder((_a = this.opts.placeholder) != null ? _a : "").setValue(this.value).onChange((v) => this.value = v);
+        t.inputEl.classList.add("dash-modal-wide");
+        t.inputEl.rows = 4;
+        t.inputEl.focus();
+      });
+    } else {
+      setting.addText((t) => {
+        var _a;
+        t.setPlaceholder((_a = this.opts.placeholder) != null ? _a : "").setValue(this.value).onChange((v) => this.value = v);
+        t.inputEl.classList.add("dash-modal-wide");
+        t.inputEl.focus();
+        t.inputEl.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            this.submit();
+          }
+        });
+      });
+    }
+    new import_obsidian10.Setting(this.contentEl).addButton((b) => b.setButtonText("Cancel").onClick(() => this.close())).addButton((b) => {
+      var _a;
+      return b.setButtonText((_a = this.opts.cta) != null ? _a : "Save").setCta().onClick(() => this.submit());
+    });
+  }
+  submit() {
+    const text = this.value.trim();
+    this.close();
+    if (text) this.onSubmit(text);
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
 
 // node_modules/dash-core/src/panels/calendar.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian11 = require("obsidian");
 
 // node_modules/dash-core/src/panels/todomodal.ts
-var import_obsidian9 = require("obsidian");
+var import_obsidian12 = require("obsidian");
 
 // node_modules/dash-core/src/panels/categorymodals.ts
-var import_obsidian10 = require("obsidian");
+var import_obsidian13 = require("obsidian");
 var DEFAULT_CATEGORY_MODALS_COPY = {
   newNoteTitle: "New note",
   titleLabel: "Title",
@@ -1525,7 +2214,7 @@ var DEFAULT_CATEGORY_MODALS_COPY = {
   pickOrNameCategory: "Pick or name a category.",
   assignedNotice: "Assigned {note} to {category}."
 };
-var NewNoteModal = class extends import_obsidian10.Modal {
+var NewNoteModal = class extends import_obsidian13.Modal {
   constructor(app, store, onDone, copy) {
     super(app);
     this.store = store;
@@ -1541,7 +2230,7 @@ var NewNoteModal = class extends import_obsidian10.Modal {
     this.titleEl.setText(c.newNoteTitle);
     const cats = this.store.listCategories().map((cat) => cat.name);
     this.picked = "";
-    new import_obsidian10.Setting(this.contentEl).setName(c.titleLabel).addText((t) => {
+    new import_obsidian13.Setting(this.contentEl).setName(c.titleLabel).addText((t) => {
       t.setPlaceholder(c.titlePlaceholder).onChange((v) => this.title = v);
       t.inputEl.focus();
       t.inputEl.addEventListener("keydown", (e) => {
@@ -1551,18 +2240,18 @@ var NewNoteModal = class extends import_obsidian10.Modal {
         }
       });
     });
-    new import_obsidian10.Setting(this.contentEl).setName(c.categoryLabel).setDesc(c.categoryDesc).addDropdown((dd) => {
+    new import_obsidian13.Setting(this.contentEl).setName(c.categoryLabel).setDesc(c.categoryDesc).addDropdown((dd) => {
       dd.addOption("", c.noneOption);
       for (const cat of cats) dd.addOption(cat, cat);
       dd.setValue("").onChange((v) => this.picked = v);
     });
-    new import_obsidian10.Setting(this.contentEl).setName(c.orNewCategoryLabel).setDesc(c.orNewCategoryDesc).addText((t) => t.setPlaceholder(c.newCategoryPlaceholder).onChange((v) => this.newCategory = v));
-    new import_obsidian10.Setting(this.contentEl).addButton((b) => b.setButtonText(c.cancel).onClick(() => this.close())).addButton((b) => b.setButtonText(c.create).setCta().onClick(() => void this.submit()));
+    new import_obsidian13.Setting(this.contentEl).setName(c.orNewCategoryLabel).setDesc(c.orNewCategoryDesc).addText((t) => t.setPlaceholder(c.newCategoryPlaceholder).onChange((v) => this.newCategory = v));
+    new import_obsidian13.Setting(this.contentEl).addButton((b) => b.setButtonText(c.cancel).onClick(() => this.close())).addButton((b) => b.setButtonText(c.create).setCta().onClick(() => void this.submit()));
   }
   async submit() {
     const title = this.title.trim();
     if (!title) {
-      new import_obsidian10.Notice(this.copy.noteNeedsTitle);
+      new import_obsidian13.Notice(this.copy.noteNeedsTitle);
       return;
     }
     const category = this.newCategory.trim() || this.picked.trim();
@@ -1575,7 +2264,7 @@ var NewNoteModal = class extends import_obsidian10.Modal {
     this.contentEl.empty();
   }
 };
-var NewCategoryModal = class extends import_obsidian10.Modal {
+var NewCategoryModal = class extends import_obsidian13.Modal {
   constructor(app, store, onDone, copy) {
     super(app);
     this.store = store;
@@ -1587,7 +2276,7 @@ var NewCategoryModal = class extends import_obsidian10.Modal {
   onOpen() {
     const c = this.copy;
     this.titleEl.setText(c.newCategoryTitle);
-    new import_obsidian10.Setting(this.contentEl).setName(c.nameLabel).addText((t) => {
+    new import_obsidian13.Setting(this.contentEl).setName(c.nameLabel).addText((t) => {
       t.setPlaceholder(c.namePlaceholder).onChange((v) => this.name = v);
       t.inputEl.focus();
       t.inputEl.addEventListener("keydown", (e) => {
@@ -1597,12 +2286,12 @@ var NewCategoryModal = class extends import_obsidian10.Modal {
         }
       });
     });
-    new import_obsidian10.Setting(this.contentEl).addButton((b) => b.setButtonText(c.cancel).onClick(() => this.close())).addButton((b) => b.setButtonText(c.create).setCta().onClick(() => void this.submit()));
+    new import_obsidian13.Setting(this.contentEl).addButton((b) => b.setButtonText(c.cancel).onClick(() => this.close())).addButton((b) => b.setButtonText(c.create).setCta().onClick(() => void this.submit()));
   }
   async submit() {
     const name = this.name.trim();
     if (!name) {
-      new import_obsidian10.Notice(this.copy.categoryNeedsName);
+      new import_obsidian13.Notice(this.copy.categoryNeedsName);
       return;
     }
     await this.store.createCategory(name);
@@ -1617,19 +2306,19 @@ function runAssignFlow(app, store, onDone, copy) {
   const c = { ...DEFAULT_CATEGORY_MODALS_COPY, ...copy };
   const notes = store.listNotes();
   if (notes.length === 0) {
-    new import_obsidian10.Notice(c.noNotesToAssign);
+    new import_obsidian13.Notice(c.noNotesToAssign);
     return;
   }
   new NoteSuggestModal(app, notes, c.pickNotePlaceholder, (note) => {
     const cats = store.listCategories().map((cat) => cat.name);
     new CategoryPromptModal(app, cats, c, async (category) => {
       await store.assign(note, category);
-      new import_obsidian10.Notice(c.assignedNotice.replace("{note}", note.basename).replace("{category}", category));
+      new import_obsidian13.Notice(c.assignedNotice.replace("{note}", note.basename).replace("{category}", category));
       onDone();
     }).open();
   }).open();
 }
-var NoteSuggestModal = class extends import_obsidian10.FuzzySuggestModal {
+var NoteSuggestModal = class extends import_obsidian13.FuzzySuggestModal {
   constructor(app, notes, placeholder, onChoose) {
     super(app);
     this.notes = notes;
@@ -1646,7 +2335,7 @@ var NoteSuggestModal = class extends import_obsidian10.FuzzySuggestModal {
     this.onChoose(file);
   }
 };
-var CategoryPromptModal = class extends import_obsidian10.Modal {
+var CategoryPromptModal = class extends import_obsidian13.Modal {
   constructor(app, categories, copy, onChoose) {
     super(app);
     this.categories = categories;
@@ -1661,12 +2350,12 @@ var CategoryPromptModal = class extends import_obsidian10.Modal {
     this.titleEl.setText(c.assignTitle);
     this.picked = (_a = this.categories[0]) != null ? _a : "";
     if (this.categories.length > 0) {
-      new import_obsidian10.Setting(this.contentEl).setName(c.existingCategoryLabel).addDropdown((dd) => {
+      new import_obsidian13.Setting(this.contentEl).setName(c.existingCategoryLabel).addDropdown((dd) => {
         for (const cat of this.categories) dd.addOption(cat, cat);
         dd.setValue(this.picked).onChange((v) => this.picked = v);
       });
     }
-    new import_obsidian10.Setting(this.contentEl).setName(c.orNewCategoryLabel).setDesc(c.orUseCategoryDesc).addText((t) => {
+    new import_obsidian13.Setting(this.contentEl).setName(c.orNewCategoryLabel).setDesc(c.orUseCategoryDesc).addText((t) => {
       t.setPlaceholder(c.newCategoryPlaceholder).onChange((v) => this.newName = v);
       if (this.categories.length === 0) t.inputEl.focus();
       t.inputEl.addEventListener("keydown", (e) => {
@@ -1676,12 +2365,12 @@ var CategoryPromptModal = class extends import_obsidian10.Modal {
         }
       });
     });
-    new import_obsidian10.Setting(this.contentEl).addButton((b) => b.setButtonText(c.cancel).onClick(() => this.close())).addButton((b) => b.setButtonText(c.assign).setCta().onClick(() => this.submit()));
+    new import_obsidian13.Setting(this.contentEl).addButton((b) => b.setButtonText(c.cancel).onClick(() => this.close())).addButton((b) => b.setButtonText(c.assign).setCta().onClick(() => this.submit()));
   }
   submit() {
     const category = this.newName.trim() || this.picked.trim();
     if (!category) {
-      new import_obsidian10.Notice(this.copy.pickOrNameCategory);
+      new import_obsidian13.Notice(this.copy.pickOrNameCategory);
       return;
     }
     this.close();
@@ -1693,7 +2382,7 @@ var CategoryPromptModal = class extends import_obsidian10.Modal {
 };
 
 // node_modules/dash-core/src/panels/clock.ts
-var import_obsidian11 = require("obsidian");
+var import_obsidian14 = require("obsidian");
 
 // node_modules/dash-core/src/panels/util.ts
 function commandExists(app, fullId) {
@@ -1756,8 +2445,8 @@ var PlacesPanel = class extends BasePanel {
 };
 
 // node_modules/dash-core/src/panels/localeventmodal.ts
-var import_obsidian12 = require("obsidian");
-var LocalEventModal = class extends import_obsidian12.Modal {
+var import_obsidian15 = require("obsidian");
+var LocalEventModal = class extends import_obsidian15.Modal {
   constructor(app, store, existing, onDone) {
     var _a, _b, _c, _d;
     super(app);
@@ -1770,14 +2459,14 @@ var LocalEventModal = class extends import_obsidian12.Modal {
     __publicField(this, "end");
     const e = existing;
     this.summary = (_a = e == null ? void 0 : e.summary) != null ? _a : "";
-    this.date = (_b = e == null ? void 0 : e.date) != null ? _b : (0, import_obsidian12.moment)().format("YYYY-MM-DD");
+    this.date = (_b = e == null ? void 0 : e.date) != null ? _b : (0, import_obsidian15.moment)().format("YYYY-MM-DD");
     this.start = (_c = e == null ? void 0 : e.start) != null ? _c : "";
     this.end = (_d = e == null ? void 0 : e.end) != null ? _d : "";
   }
   onOpen() {
     this.titleEl.setText(this.existing ? "Edit event" : "New event");
     const { contentEl } = this;
-    new import_obsidian12.Setting(contentEl).setName("Event").addText((t) => {
+    new import_obsidian15.Setting(contentEl).setName("Event").addText((t) => {
       t.setPlaceholder("What's on").setValue(this.summary).onChange((v) => this.summary = v);
       t.inputEl.classList.add("dash-modal-wide");
       t.inputEl.focus();
@@ -1788,18 +2477,18 @@ var LocalEventModal = class extends import_obsidian12.Modal {
         }
       });
     });
-    new import_obsidian12.Setting(contentEl).setName("Date").addText((t) => {
+    new import_obsidian15.Setting(contentEl).setName("Date").addText((t) => {
       t.inputEl.type = "date";
       t.setValue(this.date).onChange((v) => this.date = v);
     });
-    new import_obsidian12.Setting(contentEl).setName("Time").setDesc("Optional. Leave the start empty for an all-day event.").addText((t) => {
+    new import_obsidian15.Setting(contentEl).setName("Time").setDesc("Optional. Leave the start empty for an all-day event.").addText((t) => {
       t.inputEl.type = "time";
       t.setValue(this.start).onChange((v) => this.start = v);
     }).addText((t) => {
       t.inputEl.type = "time";
       t.setValue(this.end).onChange((v) => this.end = v);
     });
-    const buttons = new import_obsidian12.Setting(contentEl);
+    const buttons = new import_obsidian15.Setting(contentEl);
     if (this.existing) {
       buttons.addButton(
         (b) => b.setButtonText("Delete").setWarning().onClick(async () => {
@@ -1815,11 +2504,11 @@ var LocalEventModal = class extends import_obsidian12.Modal {
   async submit() {
     const summary = this.summary.trim();
     if (!summary) {
-      new import_obsidian12.Notice("An event needs a description.");
+      new import_obsidian15.Notice("An event needs a description.");
       return;
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(this.date)) {
-      new import_obsidian12.Notice("An event needs a valid date.");
+      new import_obsidian15.Notice("An event needs a valid date.");
       return;
     }
     const patch = {
@@ -1839,7 +2528,7 @@ var LocalEventModal = class extends import_obsidian12.Modal {
 };
 
 // node_modules/dash-core/src/panels/meals.ts
-var import_obsidian13 = require("obsidian");
+var import_obsidian16 = require("obsidian");
 var MealsPanel = class extends BasePanel {
   constructor(copy) {
     super();
@@ -1869,42 +2558,44 @@ var MealsPanel = class extends BasePanel {
         card.createDiv({ cls: "dash-meal-open", text: this.copy.openRecipe });
         card.addEventListener("click", () => {
           const dest = this.ctx.app.metadataCache.getFirstLinkpathDest(meal.link, "");
-          if (dest instanceof import_obsidian13.TFile) void this.ctx.app.workspace.getLeaf(false).openFile(dest);
+          if (dest instanceof import_obsidian16.TFile) void this.ctx.app.workspace.getLeaf(false).openFile(dest);
         });
       }
     }
-    const grocery = (_e = await ((_d = companion.groceryList) == null ? void 0 : _d.call(companion))) != null ? _e : { path: "", items: [], exists: false };
-    const gWrap = this.el.createDiv({ cls: "dash-grocery" });
-    gWrap.createDiv({ cls: "dash-subhead", text: this.copy.groceryHeading });
-    if (!grocery.exists) {
-      gWrap.createDiv({ cls: "dash-muted", text: this.copy.noGroceryAt.replace("{path}", grocery.path) });
-    } else if (grocery.items.length === 0) {
-      gWrap.createDiv({ cls: "dash-muted", text: this.copy.groceryEmpty });
-    } else {
-      const remaining = grocery.items.filter((i) => !i.checked).length;
-      gWrap.createDiv({
-        cls: "dash-grocery-count",
-        text: this.copy.remaining.replace("{remaining}", String(remaining)).replace("{total}", String(grocery.items.length))
-      });
-      const list = gWrap.createDiv({ cls: "dash-grocery-list" });
-      for (const item of grocery.items) {
-        if (companion.toggleGroceryItem) {
-          const row = list.createEl("label", { cls: "dash-grocery-row" });
-          if (item.checked) row.addClass("is-checked");
-          const box = row.createEl("input", { attr: { type: "checkbox" } });
-          box.checked = item.checked;
-          box.addEventListener("change", async () => {
-            var _a2;
-            await ((_a2 = companion.toggleGroceryItem) == null ? void 0 : _a2.call(companion, item.line));
-            this.ctx.markFoodFocus();
-            this.rerender();
-          });
-          row.createSpan({ cls: "dash-grocery-name", text: item.name });
-        } else {
-          const row = list.createDiv({ cls: "dash-grocery-row" });
-          if (item.checked) row.addClass("is-checked");
-          row.createSpan({ cls: "dash-grocery-box", text: item.checked ? "\u2611" : "\u2610" });
-          row.createSpan({ cls: "dash-grocery-name", text: item.name });
+    if (this.copy.showGrocery !== false) {
+      const grocery = (_e = await ((_d = companion.groceryList) == null ? void 0 : _d.call(companion))) != null ? _e : { path: "", items: [], exists: false };
+      const gWrap = this.el.createDiv({ cls: "dash-grocery" });
+      gWrap.createDiv({ cls: "dash-subhead", text: this.copy.groceryHeading });
+      if (!grocery.exists) {
+        gWrap.createDiv({ cls: "dash-muted", text: this.copy.noGroceryAt.replace("{path}", grocery.path) });
+      } else if (grocery.items.length === 0) {
+        gWrap.createDiv({ cls: "dash-muted", text: this.copy.groceryEmpty });
+      } else {
+        const remaining = grocery.items.filter((i) => !i.checked).length;
+        gWrap.createDiv({
+          cls: "dash-grocery-count",
+          text: this.copy.remaining.replace("{remaining}", String(remaining)).replace("{total}", String(grocery.items.length))
+        });
+        const list = gWrap.createDiv({ cls: "dash-grocery-list" });
+        for (const item of grocery.items) {
+          if (companion.toggleGroceryItem) {
+            const row = list.createEl("label", { cls: "dash-grocery-row" });
+            if (item.checked) row.addClass("is-checked");
+            const box = row.createEl("input", { attr: { type: "checkbox" } });
+            box.checked = item.checked;
+            box.addEventListener("change", async () => {
+              var _a2;
+              await ((_a2 = companion.toggleGroceryItem) == null ? void 0 : _a2.call(companion, item.line));
+              this.ctx.markFoodFocus();
+              this.rerender();
+            });
+            row.createSpan({ cls: "dash-grocery-name", text: item.name });
+          } else {
+            const row = list.createDiv({ cls: "dash-grocery-row" });
+            if (item.checked) row.addClass("is-checked");
+            row.createSpan({ cls: "dash-grocery-box", text: item.checked ? "\u2611" : "\u2610" });
+            row.createSpan({ cls: "dash-grocery-name", text: item.name });
+          }
         }
       }
     }
@@ -1921,7 +2612,7 @@ var MealsPanel = class extends BasePanel {
 };
 
 // node_modules/dash-core/src/panels/journal.ts
-var import_obsidian14 = require("obsidian");
+var import_obsidian17 = require("obsidian");
 var JournalPanel = class extends BasePanel {
   constructor(copy) {
     super();
@@ -1950,7 +2641,7 @@ var JournalPanel = class extends BasePanel {
   /** Read-only carry-over of yesterday's configured heading onto today. */
   async renderYesterdayCarry() {
     if (!this.copy.carryHeading) return;
-    const yesterday = (0, import_obsidian14.moment)().subtract(1, "day").format("YYYY-MM-DD");
+    const yesterday = (0, import_obsidian17.moment)().subtract(1, "day").format("YYYY-MM-DD");
     let text = "";
     try {
       const raw = await readDailyNoteRaw(this.ctx.app, yesterday);
@@ -1973,11 +2664,20 @@ var JournalPanel = class extends BasePanel {
     const loaded = await readDailyField(this.ctx.app, field.spec);
     ta.value = field.stripPlaceholder ? tidy(loaded) : loaded;
     autosize(ta);
+    let lastWidth = -1;
+    const ro = new ResizeObserver((entries) => {
+      var _a, _b;
+      const width = (_b = (_a = entries[0]) == null ? void 0 : _a.contentRect.width) != null ? _b : 0;
+      if (width === lastWidth) return;
+      lastWidth = width;
+      autosize(ta);
+    });
+    ro.observe(block);
+    this.onCleanup(() => ro.disconnect());
     let timer = null;
     const save = () => {
-      void writeDailyField(this.ctx.app, field.spec, ta.value).catch(
-        (e) => console.error("dash-core: journal save failed", e)
-      );
+      const write = field.ensureHeading ? writeDailyFieldOrCreate(this.ctx.app, field.spec, ta.value, field.ensureHeading) : writeDailyField(this.ctx.app, field.spec, ta.value);
+      void write.catch((e) => console.error("dash-core: journal save failed", e));
     };
     ta.addEventListener("focus", () => {
       this.editing = true;
@@ -2015,10 +2715,93 @@ function tidy(text) {
 }
 
 // node_modules/dash-core/src/panels/weeklygoals.ts
-var import_obsidian15 = require("obsidian");
+var import_obsidian18 = require("obsidian");
+function weekKeyOf(weekStart) {
+  return weekStart.clone().startOf("week").format("YYYY-MM-DD");
+}
+function currentWeekKey() {
+  return weekKeyOf((0, import_obsidian18.moment)());
+}
+function weekLabel(weekKey) {
+  const start = (0, import_obsidian18.moment)(weekKey, "YYYY-MM-DD");
+  return `${start.format("MMM D")} \u2013 ${start.clone().add(6, "days").format("MMM D")}`;
+}
+var WeeklyGoalsModal = class extends import_obsidian18.Modal {
+  constructor(app, store, todos, weekKey, onDone, copy) {
+    super(app);
+    this.store = store;
+    this.todos = todos;
+    this.weekKey = weekKey;
+    this.onDone = onDone;
+    this.copy = copy;
+    __publicField(this, "draft", "");
+  }
+  onOpen() {
+    this.titleEl.setText(this.copy.titleTemplate.replace("{week}", weekLabel(this.weekKey)));
+    this.render();
+  }
+  render() {
+    const { contentEl } = this;
+    contentEl.empty();
+    const goals = this.store.forWeek(this.weekKey);
+    const list = contentEl.createDiv({ cls: "dash-goals-list" });
+    if (goals.length === 0) {
+      list.createDiv({ cls: "dash-muted", text: this.copy.empty });
+    }
+    for (const goal of goals) {
+      const row = list.createDiv({ cls: "dash-goals-row" });
+      row.createSpan({ cls: "dash-goals-text", text: goal.text });
+      const actions = row.createDiv({ cls: "dash-goals-actions" });
+      const toDir = actions.createEl("button", { cls: "dash-btn dash-btn-sm", text: this.copy.toItem });
+      toDir.addEventListener("click", () => void this.toItem(goal.text));
+      const del = actions.createEl("button", {
+        cls: "dash-icon-btn",
+        text: "\u{1F5D1}",
+        attr: { "aria-label": this.copy.removeGoal, title: this.copy.removeGoal }
+      });
+      del.addEventListener("click", async () => {
+        await this.store.remove(this.weekKey, goal.id);
+        this.onDone();
+        this.render();
+      });
+    }
+    const addRow = new import_obsidian18.Setting(contentEl).setName(this.copy.addName);
+    addRow.addText((t) => {
+      t.setPlaceholder(this.copy.addPlaceholder).setValue(this.draft).onChange((v) => this.draft = v);
+      t.inputEl.classList.add("dash-modal-wide");
+      t.inputEl.focus();
+      t.inputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          void this.add();
+        }
+      });
+    });
+    addRow.addButton((b) => b.setButtonText(this.copy.addButton).setCta().onClick(() => void this.add()));
+    new import_obsidian18.Setting(contentEl).addButton((b) => b.setButtonText(this.copy.done).onClick(() => this.close()));
+  }
+  async add() {
+    const text = this.draft.trim();
+    if (!text) return;
+    await this.store.add(this.weekKey, text);
+    this.draft = "";
+    this.onDone();
+    this.render();
+  }
+  /** Send a goal to the to-do list as a one-time item due at week's end. */
+  async toItem(text) {
+    const due = (0, import_obsidian18.moment)(this.weekKey, "YYYY-MM-DD").add(6, "days").format("YYYY-MM-DD");
+    await this.todos.add({ text, dueDate: due });
+    new import_obsidian18.Notice(this.copy.addedNotice);
+    this.onDone();
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
 
 // node_modules/dash-core/src/panels/secondbrain.ts
-var import_obsidian16 = require("obsidian");
+var import_obsidian19 = require("obsidian");
 var DEFAULT_SECOND_BRAIN_COPY = {
   title: "Second Brain",
   activeBadge: "{n} active",
@@ -2102,7 +2885,7 @@ var SecondBrainPanel = class extends BasePanel {
         });
         this.iconBtn(row, "\u293A", c.unarchiveTooltip, async () => {
           await this.store.restoreNote(file);
-          new import_obsidian16.Notice(c.restoredNotice.replace("{name}", file.basename));
+          new import_obsidian19.Notice(c.restoredNotice.replace("{name}", file.basename));
           this.rerender();
         });
       }
@@ -2118,7 +2901,7 @@ var SecondBrainPanel = class extends BasePanel {
     });
     this.iconBtn(row, "\u{1F5C4}", c.archiveTooltip, async () => {
       await this.store.archiveNote(file);
-      new import_obsidian16.Notice(c.archivedNotice.replace("{name}", file.basename));
+      new import_obsidian19.Notice(c.archivedNotice.replace("{name}", file.basename));
       this.rerender();
     });
     this.iconBtn(row, "\u{1F5D1}", c.deleteTooltip, () => {
@@ -2130,7 +2913,7 @@ var SecondBrainPanel = class extends BasePanel {
         c.deleteConfirm,
         async () => {
           await this.store.deleteNote(file);
-          new import_obsidian16.Notice(c.deletedNotice.replace("{name}", file.basename));
+          new import_obsidian19.Notice(c.deletedNotice.replace("{name}", file.basename));
           this.rerender();
         }
       ).open();
@@ -2142,7 +2925,7 @@ var SecondBrainPanel = class extends BasePanel {
   }
   fuzzy(files, query) {
     var _a;
-    const search = (0, import_obsidian16.prepareFuzzySearch)(query);
+    const search = (0, import_obsidian19.prepareFuzzySearch)(query);
     const scored = [];
     for (const file of files) {
       let best = search(file.basename);
@@ -2156,7 +2939,7 @@ var SecondBrainPanel = class extends BasePanel {
     return scored.sort((a, b) => b.score - a.score).slice(0, 20).map((s) => s.file);
   }
 };
-var NewNoteModal2 = class extends import_obsidian16.Modal {
+var NewNoteModal2 = class extends import_obsidian19.Modal {
   constructor(app, store, copy, onDone) {
     super(app);
     this.store = store;
@@ -2167,7 +2950,7 @@ var NewNoteModal2 = class extends import_obsidian16.Modal {
   onOpen() {
     const c = this.copy;
     this.titleEl.setText(c.newNoteTitle);
-    new import_obsidian16.Setting(this.contentEl).setName(c.noteTitleLabel).addText((t) => {
+    new import_obsidian19.Setting(this.contentEl).setName(c.noteTitleLabel).addText((t) => {
       t.setPlaceholder(c.noteTitlePlaceholder).onChange((v) => this.title = v);
       t.inputEl.focus();
       t.inputEl.addEventListener("keydown", (e) => {
@@ -2177,12 +2960,12 @@ var NewNoteModal2 = class extends import_obsidian16.Modal {
         }
       });
     });
-    new import_obsidian16.Setting(this.contentEl).addButton((b) => b.setButtonText(c.cancel).onClick(() => this.close())).addButton((b) => b.setButtonText(c.create).setCta().onClick(() => void this.submit()));
+    new import_obsidian19.Setting(this.contentEl).addButton((b) => b.setButtonText(c.cancel).onClick(() => this.close())).addButton((b) => b.setButtonText(c.create).setCta().onClick(() => void this.submit()));
   }
   async submit() {
     const title = this.title.trim();
     if (!title) {
-      new import_obsidian16.Notice(this.copy.noteNeedsTitle);
+      new import_obsidian19.Notice(this.copy.noteNeedsTitle);
       return;
     }
     const file = await this.store.createNote(title);
@@ -2194,7 +2977,7 @@ var NewNoteModal2 = class extends import_obsidian16.Modal {
     this.contentEl.empty();
   }
 };
-var ConfirmModal = class extends import_obsidian16.Modal {
+var ConfirmModal = class extends import_obsidian19.Modal {
   constructor(app, heading, body, cancelLabel, confirmLabel, onConfirm) {
     super(app);
     this.heading = heading;
@@ -2206,7 +2989,7 @@ var ConfirmModal = class extends import_obsidian16.Modal {
   onOpen() {
     this.titleEl.setText(this.heading);
     this.contentEl.createEl("p", { text: this.body });
-    new import_obsidian16.Setting(this.contentEl).addButton((b) => b.setButtonText(this.cancelLabel).onClick(() => this.close())).addButton(
+    new import_obsidian19.Setting(this.contentEl).addButton((b) => b.setButtonText(this.cancelLabel).onClick(() => this.close())).addButton(
       (b) => b.setButtonText(this.confirmLabel).setWarning().onClick(() => {
         this.close();
         this.onConfirm();
@@ -2219,7 +3002,7 @@ var ConfirmModal = class extends import_obsidian16.Modal {
 };
 
 // node_modules/dash-core/src/panels/search.ts
-var import_obsidian17 = require("obsidian");
+var import_obsidian20 = require("obsidian");
 var DEFAULT_SEARCH_COPY = {
   title: "Knowledge Base",
   newNote: "+ Note",
@@ -2356,7 +3139,7 @@ var SearchPanel = class extends BasePanel {
       return;
     }
     this.showingRecent = false;
-    const search = (0, import_obsidian17.prepareFuzzySearch)(q);
+    const search = (0, import_obsidian20.prepareFuzzySearch)(q);
     const nameHits = [];
     for (const cand of this.index) {
       let best = search(cand.basename);
@@ -2456,19 +3239,67 @@ function firstMatchingLine(content, needle) {
 }
 
 // node_modules/dash-core/src/panels/todo.ts
-var import_obsidian18 = require("obsidian");
-
-// node_modules/dash-core/src/panels/weekreview.ts
-var import_obsidian19 = require("obsidian");
-
-// node_modules/dash-core/src/panels/agenda.ts
-var import_obsidian20 = require("obsidian");
-
-// node_modules/dash-core/src/panels/weekprint.ts
 var import_obsidian21 = require("obsidian");
 
-// src/panels/clock.ts
+// node_modules/dash-core/src/panels/weekreview.ts
 var import_obsidian22 = require("obsidian");
+var WeekReviewModal = class extends import_obsidian22.Modal {
+  constructor(app, config) {
+    super(app);
+    this.config = config;
+  }
+  onOpen() {
+    this.titleEl.setText(this.config.title);
+    this.modalEl.addClass("dash-review-modal");
+    const body = this.contentEl.createDiv({ cls: "dash-review" });
+    body.createDiv({ cls: "dash-muted", text: this.config.compilingText });
+    void this.config.compile().then((data) => {
+      if (!body.isConnected) return;
+      this.render(body, data);
+    });
+  }
+  render(host, data) {
+    host.empty();
+    host.createDiv({ cls: "dash-review-header", text: data.header });
+    if (data.streakLine) host.createDiv({ cls: "dash-review-streak", text: data.streakLine });
+    for (const block of data.blocks) {
+      const b = host.createDiv({ cls: "dash-review-block" });
+      b.createDiv({ cls: "dash-review-stat-head", text: block.head });
+      if (block.figure !== void 0) b.createDiv({ cls: "dash-review-figure", text: block.figure });
+      if (block.bars) this.renderBars(b, block.bars);
+      if (block.line !== void 0) b.createDiv({ cls: "dash-review-line", text: block.line });
+      if (block.chips) {
+        const chips = b.createDiv({ cls: "dash-review-chips" });
+        for (const name of block.chips) chips.createSpan({ cls: "dash-chip dash-chip-cold", text: name });
+      }
+    }
+  }
+  renderBars(parent, data) {
+    const bars = parent.createDiv({ cls: "dash-review-bars" });
+    const max = Math.max(1, ...data.map((d) => d.count));
+    for (const d of data) {
+      const cell = bars.createDiv({ cls: "dash-review-bar-cell" });
+      const track = cell.createDiv({ cls: "dash-review-bar-track" });
+      const fill = track.createDiv({ cls: "dash-review-bar-fill" });
+      fill.style.height = `${Math.round(d.count / max * 100)}%`;
+      if (d.count === 0) fill.addClass("is-empty");
+      cell.createDiv({ cls: "dash-review-bar-day", text: d.label });
+      cell.createDiv({ cls: "dash-review-bar-count", text: String(d.count) });
+    }
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+
+// node_modules/dash-core/src/panels/agenda.ts
+var import_obsidian23 = require("obsidian");
+
+// node_modules/dash-core/src/panels/weekprint.ts
+var import_obsidian24 = require("obsidian");
+
+// src/panels/clock.ts
+var import_obsidian25 = require("obsidian");
 
 // src/panels/types.ts
 var BasePanel2 = class {
@@ -2547,7 +3378,7 @@ var ClockPanel = class extends BasePanel2 {
     this.tick();
   }
   tick() {
-    const now = (0, import_obsidian22.moment)();
+    const now = (0, import_obsidian25.moment)();
     const format = this.ctx.settings().clock24h ? "H:mm" : "h:mm A";
     if (this.timeEl) this.timeEl.setText(now.format(format));
     if (this.dateEl) this.dateEl.setText(now.format("dddd, MMMM D, YYYY"));
@@ -2636,10 +3467,11 @@ var VersePanel = class extends BasePanel2 {
 };
 
 // src/panels/todo.ts
-var import_obsidian23 = require("obsidian");
+var import_obsidian26 = require("obsidian");
 var TodoPanel = class extends BasePanel2 {
-  constructor() {
-    super(...arguments);
+  constructor(openWeeklyReview) {
+    super();
+    this.openWeeklyReview = openWeeklyReview;
     this.id = "todo";
     this.title = "To-do";
     /** Which rows are expanded to show their sub-tasks / note — survives re-render. */
@@ -2655,6 +3487,9 @@ var TodoPanel = class extends BasePanel2 {
     const overdue = active.filter((i) => i.flagged).length;
     if (overdue > 0) head.createSpan({ cls: "dash-chip dash-chip-warn", text: `${overdue} overdue` });
     head.createSpan({ cls: "dash-chip", text: `${active.length} to do` });
+    const reviewBtn = head.createEl("button", { cls: "dash-btn dash-btn-sm dash-todo-review", text: "Week in review" });
+    reviewBtn.setAttr("title", "A look back at the last seven days");
+    reviewBtn.addEventListener("click", () => this.openWeeklyReview());
     const addBtn = this.el.createEl("button", { cls: "dash-btn dash-btn-primary dash-todo-add", text: "+ Add a to-do" });
     addBtn.addEventListener(
       "click",
@@ -2685,7 +3520,7 @@ var TodoPanel = class extends BasePanel2 {
     var _a;
     const store = this.ctx.todos;
     const item = inst.item;
-    const today2 = (0, import_obsidian23.moment)().format("YYYY-MM-DD");
+    const today3 = (0, import_obsidian26.moment)().format("YYYY-MM-DD");
     const wrap = parent.createDiv({ cls: "dash-todo-item" });
     const row = wrap.createDiv({ cls: "dash-todo-row" });
     if (inst.flagged) row.addClass("is-flagged");
@@ -2702,16 +3537,16 @@ var TodoPanel = class extends BasePanel2 {
     if (item.recurrence.type !== "none") meta.createSpan({ cls: "dash-chip dash-chip-cold", text: describeRecurrence(item.recurrence) });
     if (item.scheduledTime) meta.createSpan({ cls: "dash-chip", text: item.scheduledTime });
     if (item.dueDate) {
-      const overdue = !inst.done && item.dueDate < today2;
-      meta.createSpan({ cls: overdue ? "dash-chip dash-chip-warn" : "dash-chip", text: dueLabel(item.dueDate, today2) });
+      const overdue = !inst.done && item.dueDate < today3;
+      meta.createSpan({ cls: overdue ? "dash-chip dash-chip-warn" : "dash-chip", text: dueLabel(item.dueDate, today3) });
     }
     if (item.showOnWeekPrint) meta.createSpan({ cls: "dash-chip dash-chip-cold", text: "on planner" });
     if (inst.flagged) meta.createSpan({ cls: "dash-chip dash-chip-warn", text: inst.flagLabel });
     const subs = (_a = item.subItems) != null ? _a : [];
     if (subs.length > 0) {
-      const doneN = subItemsDoneCount(item, today2);
+      const doneN = subItemsDoneCount(item, today3);
       const chip = meta.createSpan({ cls: "dash-chip dash-chip-cold", text: `sub-tasks ${doneN}/${subs.length}` });
-      if (allSubItemsDone(item, today2)) chip.addClass("dash-chip-warn");
+      if (allSubItemsDone(item, today3)) chip.addClass("dash-chip-warn");
     }
     const actions = row.createDiv({ cls: "dash-todo-actions" });
     const hasDetail = subs.length > 0 || !!item.note;
@@ -2740,7 +3575,7 @@ var TodoPanel = class extends BasePanel2 {
     } else if (inst.recurring && !inst.done) {
       this.iconBtn(actions, "\u293C", "Skip just for today", false, async () => {
         await store.skipInstance(item.id);
-        new import_obsidian23.Notice("Skipped for today. It comes back on the next occurrence.");
+        new import_obsidian26.Notice("Skipped for today. It comes back on the next occurrence.");
         this.after();
       });
     }
@@ -2748,11 +3583,11 @@ var TodoPanel = class extends BasePanel2 {
       await store.remove(item.id);
       this.after();
     });
-    if (isOpen) this.renderDetail(wrap, inst, today2);
+    if (isOpen) this.renderDetail(wrap, inst, today3);
   }
   /** Expanded region under a row: an inline note line and the sub-task checklist,
    * with per-occurrence completion for repeating to-dos. */
-  renderDetail(wrap, inst, today2) {
+  renderDetail(wrap, inst, today3) {
     var _a, _b;
     const store = this.ctx.todos;
     const item = inst.item;
@@ -2777,7 +3612,7 @@ var TodoPanel = class extends BasePanel2 {
     const subList = detail.createDiv({ cls: "dash-subtask-list" });
     for (const sub of (_b = item.subItems) != null ? _b : []) {
       const srow = subList.createDiv({ cls: "dash-subtask-row" });
-      const done = subItemDone(item, sub.id, today2);
+      const done = subItemDone(item, sub.id, today3);
       if (done) srow.addClass("is-done");
       const cb = srow.createEl("button", {
         cls: "dash-subtask-check",
@@ -2785,7 +3620,7 @@ var TodoPanel = class extends BasePanel2 {
       });
       cb.setText(done ? "\u2713" : "");
       cb.addEventListener("click", async () => {
-        await store.toggleSubItem(item.id, sub.id, today2);
+        await store.toggleSubItem(item.id, sub.id, today3);
         this.after();
       });
       srow.createSpan({ cls: "dash-subtask-text", text: sub.text });
@@ -2832,10 +3667,10 @@ var TodoPanel = class extends BasePanel2 {
     this.ctx.requestRefresh("manual");
   }
 };
-function dueLabel(due, today2) {
-  if (due < today2) return `overdue \xB7 ${(0, import_obsidian23.moment)(due, "YYYY-MM-DD").format("MMM D")}`;
-  if (due === today2) return "due today";
-  return `due ${(0, import_obsidian23.moment)(due, "YYYY-MM-DD").format("MMM D")}`;
+function dueLabel(due, today3) {
+  if (due < today3) return `overdue \xB7 ${(0, import_obsidian26.moment)(due, "YYYY-MM-DD").format("MMM D")}`;
+  if (due === today3) return "due today";
+  return `due ${(0, import_obsidian26.moment)(due, "YYYY-MM-DD").format("MMM D")}`;
 }
 function activeSort(a, b) {
   var _a, _b;
@@ -2854,7 +3689,7 @@ var WEEKDAYS = [
   { v: 6, label: "Sat" },
   { v: 0, label: "Sun" }
 ];
-var TodoEditModal2 = class extends import_obsidian23.Modal {
+var TodoEditModal2 = class extends import_obsidian26.Modal {
   constructor(app, store, existing, onDone) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     super(app);
@@ -2864,8 +3699,8 @@ var TodoEditModal2 = class extends import_obsidian23.Modal {
     const e = existing;
     this.text = (_a = e == null ? void 0 : e.text) != null ? _a : "";
     this.recType = (_b = e == null ? void 0 : e.recurrence.type) != null ? _b : "none";
-    this.weeklyDays = new Set((_c = e == null ? void 0 : e.recurrence.days) != null ? _c : [(0, import_obsidian23.moment)().day()]);
-    this.monthlyDate = (_d = e == null ? void 0 : e.recurrence.date) != null ? _d : (0, import_obsidian23.moment)().date();
+    this.weeklyDays = new Set((_c = e == null ? void 0 : e.recurrence.days) != null ? _c : [(0, import_obsidian26.moment)().day()]);
+    this.monthlyDate = (_d = e == null ? void 0 : e.recurrence.date) != null ? _d : (0, import_obsidian26.moment)().date();
     this.everyN = (_e = e == null ? void 0 : e.recurrence.n) != null ? _e : 2;
     this.scheduledDate = (_f = e == null ? void 0 : e.scheduledDate) != null ? _f : "";
     this.scheduledTime = (_g = e == null ? void 0 : e.scheduledTime) != null ? _g : "";
@@ -2875,7 +3710,7 @@ var TodoEditModal2 = class extends import_obsidian23.Modal {
   onOpen() {
     this.titleEl.setText(this.existing ? "Edit to-do" : "New to-do");
     const { contentEl } = this;
-    new import_obsidian23.Setting(contentEl).setName("To-do").addText((t) => {
+    new import_obsidian26.Setting(contentEl).setName("To-do").addText((t) => {
       t.setPlaceholder("What needs doing?").setValue(this.text).onChange((v) => this.text = v);
       t.inputEl.classList.add("dash-modal-wide");
       t.inputEl.focus();
@@ -2887,7 +3722,7 @@ var TodoEditModal2 = class extends import_obsidian23.Modal {
       });
     });
     const dynamic = contentEl.createDiv();
-    new import_obsidian23.Setting(contentEl).setName("Repeat").addDropdown((dd) => {
+    new import_obsidian26.Setting(contentEl).setName("Repeat").addDropdown((dd) => {
       dd.addOptions({
         none: "Just once",
         daily: "Every day",
@@ -2903,24 +3738,24 @@ var TodoEditModal2 = class extends import_obsidian23.Modal {
     });
     contentEl.appendChild(dynamic);
     this.renderDynamic(dynamic);
-    new import_obsidian23.Setting(contentEl).setName("Start on").setDesc("Optional. Hide this until a date (and time). For repeats, this is the start date.").addText((t) => {
+    new import_obsidian26.Setting(contentEl).setName("Start on").setDesc("Optional. Hide this until a date (and time). For repeats, this is the start date.").addText((t) => {
       t.inputEl.type = "date";
       t.setValue(this.scheduledDate).onChange((v) => this.scheduledDate = v);
     }).addText((t) => {
       t.inputEl.type = "time";
       t.setValue(this.scheduledTime).onChange((v) => this.scheduledTime = v);
     });
-    new import_obsidian23.Setting(contentEl).setName("Due by").setDesc("Optional soft deadline. Shown as a chip; once it's past, it reads \u201Coverdue\u201D.").addText((t) => {
+    new import_obsidian26.Setting(contentEl).setName("Due by").setDesc("Optional soft deadline. Shown as a chip; once it's past, it reads \u201Coverdue\u201D.").addText((t) => {
       t.inputEl.type = "date";
       t.setValue(this.dueDate).onChange((v) => this.dueDate = v);
     });
-    new import_obsidian23.Setting(contentEl).setName("Show on the printed week").setDesc("Draw this to-do on the printable week-at-a-glance planner on its scheduled or due day.").addToggle((t) => t.setValue(this.showOnWeekPrint).onChange((v) => this.showOnWeekPrint = v));
-    new import_obsidian23.Setting(contentEl).addButton((b) => b.setButtonText("Cancel").onClick(() => this.close())).addButton((b) => b.setButtonText(this.existing ? "Save" : "Add").setCta().onClick(() => void this.submit()));
+    new import_obsidian26.Setting(contentEl).setName("Show on the printed week").setDesc("Draw this to-do on the printable week-at-a-glance planner on its scheduled or due day.").addToggle((t) => t.setValue(this.showOnWeekPrint).onChange((v) => this.showOnWeekPrint = v));
+    new import_obsidian26.Setting(contentEl).addButton((b) => b.setButtonText("Cancel").onClick(() => this.close())).addButton((b) => b.setButtonText(this.existing ? "Save" : "Add").setCta().onClick(() => void this.submit()));
   }
   renderDynamic(host) {
     host.empty();
     if (this.recType === "weekly") {
-      const s = new import_obsidian23.Setting(host).setName("On these days");
+      const s = new import_obsidian26.Setting(host).setName("On these days");
       for (const d of WEEKDAYS) {
         const btn = s.controlEl.createEl("button", { cls: "dash-day-toggle", text: d.label });
         if (this.weeklyDays.has(d.v)) btn.addClass("is-on");
@@ -2931,14 +3766,14 @@ var TodoEditModal2 = class extends import_obsidian23.Modal {
         });
       }
     } else if (this.recType === "monthly") {
-      new import_obsidian23.Setting(host).setName("Day of the month").addText((t) => {
+      new import_obsidian26.Setting(host).setName("Day of the month").addText((t) => {
         t.inputEl.type = "number";
         t.inputEl.min = "1";
         t.inputEl.max = "31";
         t.setValue(String(this.monthlyDate)).onChange((v) => this.monthlyDate = clamp(Number(v), 1, 31));
       });
     } else if (this.recType === "everyNDays") {
-      new import_obsidian23.Setting(host).setName("Every").setDesc("days").addText((t) => {
+      new import_obsidian26.Setting(host).setName("Every").setDesc("days").addText((t) => {
         t.inputEl.type = "number";
         t.inputEl.min = "1";
         t.setValue(String(this.everyN)).onChange((v) => this.everyN = Math.max(1, Number(v) || 1));
@@ -2960,7 +3795,7 @@ var TodoEditModal2 = class extends import_obsidian23.Modal {
   async submit() {
     const text = this.text.trim();
     if (!text) {
-      new import_obsidian23.Notice("Please type what the to-do is.");
+      new import_obsidian26.Notice("Please type what the to-do is.");
       return;
     }
     const patch = {
@@ -2985,7 +3820,7 @@ function clamp(n, lo, hi) {
 }
 
 // src/panels/agenda.ts
-var import_obsidian24 = require("obsidian");
+var import_obsidian27 = require("obsidian");
 
 // src/core/themes.ts
 var THEMES = [
@@ -3019,7 +3854,37 @@ function calendarColorVar(index) {
   return `var(--dash-cal-${index % CALENDAR_TOKEN_COUNT + 1})`;
 }
 
+// src/adapters.ts
+function friendlyLocalEvents(plugin) {
+  return {
+    add: (patch) => plugin.addLocalEvent(patch),
+    update: (id, patch) => plugin.updateLocalEvent(id, patch),
+    remove: (id) => plugin.removeLocalEvent(id)
+  };
+}
+function friendlyWeeklyGoals(plugin) {
+  return {
+    forWeek: (weekKey) => plugin.weeklyGoalsFor(weekKey),
+    add: (weekKey, text) => plugin.addWeeklyGoal(weekKey, text),
+    remove: (weekKey, id) => plugin.removeWeeklyGoal(weekKey, id)
+  };
+}
+var FRIENDLY_WEEKLYGOALS_COPY = {
+  titleTemplate: "This week's goals \xB7 {week}",
+  empty: "No goals for this week yet. What would make it a good week?",
+  toItem: "\u2192 To-do",
+  removeGoal: "Remove goal",
+  addName: "Add a goal",
+  addPlaceholder: "Something you'd like to get done this week",
+  addButton: "Add",
+  done: "Done",
+  addedNotice: "Added to your to-do list, due at the end of the week."
+};
+
 // src/panels/agenda.ts
+function calColor(cal, index) {
+  return cal.color || calendarColorVar(index);
+}
 var LOCAL_EVENT_COLOR = "var(--dash-cal-local, var(--dash-accent, #b5836b))";
 var FETCH_CONCURRENCY = 4;
 var AgendaPanel = class extends BasePanel2 {
@@ -3034,28 +3899,48 @@ var AgendaPanel = class extends BasePanel2 {
     this.userScrolled = false;
     this.lastScrollTop = 0;
     this.suppressScrollHandler = false;
+    /** Today's items that feed the "what's next" countdown, kept for the minute tick. */
+    this.countdownItems = [];
+    this.hadTimedEvents = false;
   }
   async setup() {
     const minutes = Math.max(1, this.ctx.settings().agendaRefreshMinutes || 30);
     this.setInterval(() => void this.fetchAll(), minutes * 60 * 1e3);
+    this.setInterval(() => {
+      var _a;
+      if ((_a = this.countdownEl) == null ? void 0 : _a.isConnected) this.renderCountdown();
+    }, 60 * 1e3);
     void this.fetchAll();
   }
   renderBody() {
     const s = this.ctx.settings();
     const head = placard2(this.el, "Today's Agenda");
-    head.createSpan({ cls: "dash-placard-badge", text: (0, import_obsidian24.moment)().format("ddd, MMM D") });
+    head.createSpan({ cls: "dash-placard-badge", text: (0, import_obsidian27.moment)().format("ddd, MMM D") });
     const toolbar = this.el.createDiv({ cls: "dash-agenda-toolbar" });
     const addBtn = toolbar.createEl("button", { cls: "dash-btn", text: "\uFF0B Add event" });
     addBtn.setAttr("title", "Add a one-off event to today's agenda (stored on the dashboard, synced across devices)");
     addBtn.addEventListener(
       "click",
-      () => new LocalEventModal(this.ctx.app, this.ctx.plugin.localEventsStore, void 0, () => this.rerender()).open()
+      () => new LocalEventModal(this.ctx.app, friendlyLocalEvents(this.ctx.plugin), void 0, () => this.rerender()).open()
+    );
+    const goalsBtn = toolbar.createEl("button", { cls: "dash-btn", text: "\u{1F3AF} Week's goals" });
+    goalsBtn.setAttr("title", "Set a few goals for this week \u2014 they print at the top of the week planner");
+    goalsBtn.addEventListener(
+      "click",
+      () => new WeeklyGoalsModal(
+        this.ctx.app,
+        friendlyWeeklyGoals(this.ctx.plugin),
+        this.ctx.todos,
+        currentWeekKey(),
+        () => this.ctx.requestRefresh("vault"),
+        FRIENDLY_WEEKLYGOALS_COPY
+      ).open()
     );
     const printBtn = toolbar.createEl("button", { cls: "dash-btn", text: "\u{1F5A8} Print week" });
     printBtn.setAttr("title", "Open a printable week-at-a-glance planner for this week");
     printBtn.addEventListener("click", () => this.printWeek());
-    const today2 = (0, import_obsidian24.moment)().format("YYYY-MM-DD");
-    const localToday = this.ctx.localEvents.filter((e) => e.date === today2);
+    const today3 = (0, import_obsidian27.moment)().format("YYYY-MM-DD");
+    const localToday = this.ctx.localEvents.filter((e) => e.date === today3);
     if (s.agendaUrls.length === 0 && localToday.length === 0) {
       this.el.createDiv({
         cls: "dash-empty",
@@ -3072,8 +3957,8 @@ var AgendaPanel = class extends BasePanel2 {
         anyCache = true;
         oldest = Math.min(oldest, cache.fetchedAt);
         try {
-          for (const item of eventsOnDate(parseICS(cache.text), today2)) {
-            rows.push({ item, color: calendarColorVar(i), label: cal.label });
+          for (const item of eventsOnDate(parseICS(cache.text), today3)) {
+            rows.push({ item, color: calColor(cal, i), label: cal.label, countdown: cal.countdown !== false });
           }
         } catch (e) {
           this.errors.set(cal.url, "couldn't be read");
@@ -3081,7 +3966,14 @@ var AgendaPanel = class extends BasePanel2 {
       }
     });
     for (const ev of localToday) {
-      rows.push({ item: localEventToAgendaItem(ev), color: LOCAL_EVENT_COLOR, label: "Event", local: ev });
+      rows.push({ item: localEventToAgendaItem(ev), color: LOCAL_EVENT_COLOR, label: "Event", local: ev, countdown: true });
+    }
+    this.countdownItems = rows.filter((r) => r.countdown).map((r) => r.item);
+    this.hadTimedEvents = this.countdownItems.some((i) => !i.allDay);
+    this.countdownEl = void 0;
+    if (rows.length > 0) {
+      this.countdownEl = this.el.createDiv({ cls: "dash-agenda-next" });
+      this.renderCountdown();
     }
     const failed = s.agendaUrls.filter((c) => this.errors.has(c.url));
     if (failed.length) {
@@ -3099,12 +3991,12 @@ var AgendaPanel = class extends BasePanel2 {
     if (rows.length === 0 && !failed.length) {
       list.createDiv({ cls: "dash-empty", text: "Nothing on the calendar today." });
     }
-    const nowMinutes = (0, import_obsidian24.moment)().hour() * 60 + (0, import_obsidian24.moment)().minute();
+    const nowMinutes = (0, import_obsidian27.moment)().hour() * 60 + (0, import_obsidian27.moment)().minute();
     let nowMarker = null;
     let markerPlaced = false;
     const placeMarkerBefore = () => {
       const m = list.createDiv({ cls: "dash-agenda-now" });
-      m.createSpan({ cls: "dash-agenda-now-label", text: `now \xB7 ${(0, import_obsidian24.moment)().format(this.ctx.settings().clock24h ? "H:mm" : "h:mm A")}` });
+      m.createSpan({ cls: "dash-agenda-now-label", text: `now \xB7 ${(0, import_obsidian27.moment)().format(this.ctx.settings().clock24h ? "H:mm" : "h:mm A")}` });
       return m;
     };
     for (const r of rows) {
@@ -3128,7 +4020,7 @@ var AgendaPanel = class extends BasePanel2 {
         row.setAttr("title", "Edit or delete this event");
         row.addEventListener(
           "click",
-          () => new LocalEventModal(this.ctx.app, this.ctx.plugin.localEventsStore, ev, () => this.rerender()).open()
+          () => new LocalEventModal(this.ctx.app, friendlyLocalEvents(this.ctx.plugin), ev, () => this.rerender()).open()
         );
       }
     }
@@ -3155,10 +4047,36 @@ var AgendaPanel = class extends BasePanel2 {
       if (age > 90 * 1e3) {
         this.el.createDiv({
           cls: "dash-agenda-age",
-          text: `Showing the last update from ${(0, import_obsidian24.moment)(oldest).fromNow()}. Calendars can take up to eight hours to show a change; a fresh check is on its way.`
+          text: `Showing the last update from ${(0, import_obsidian27.moment)(oldest).fromNow()}. Calendars can take up to eight hours to show a change; a fresh check is on its way.`
         });
       }
     }
+  }
+  /** Draw (or redraw, each minute) the "what's next" strip. */
+  renderCountdown() {
+    var _a, _b;
+    const el = this.countdownEl;
+    if (!el) return;
+    el.empty();
+    const state = agendaState(this.countdownItems, Date.now());
+    if (state.kind === "clear") {
+      el.addClass("is-clear");
+      el.removeClass("is-now");
+      el.createDiv({
+        cls: "dash-agenda-gap",
+        text: this.hadTimedEvents ? "Nothing else on the calendar today \u2014 the rest of the day is yours." : "Nothing on the calendar today."
+      });
+      return;
+    }
+    el.removeClass("is-clear");
+    el.toggleClass("is-now", state.kind === "now");
+    const until = formatGap((_a = state.untilMs) != null ? _a : 0);
+    const line = el.createDiv({ cls: "dash-agenda-next-line" });
+    line.createSpan({ cls: "dash-agenda-next-label", text: state.kind === "now" ? "Now" : "Next" });
+    line.createSpan({ cls: "dash-agenda-next-summary", text: (_b = state.summary) != null ? _b : "" });
+    line.createSpan({ cls: "dash-agenda-next-when", text: state.kind === "now" ? `ends in ${until}` : `in ${until}` });
+    const gap = state.kind === "now" ? state.gapMs === void 0 ? "After this, you're free for the rest of the day." : `After this, you're free for ${formatGap(state.gapMs)}.` : `You're free for ${until}.`;
+    el.createDiv({ cls: "dash-agenda-gap", text: gap });
   }
   scrollToNow(list, marker) {
     if (!marker) {
@@ -3232,8 +4150,9 @@ var AgendaPanel = class extends BasePanel2 {
         } catch (e) {
         }
       }
-      return { events, color: colors[i % colors.length], label: cal.label };
+      return { events, color: cal.color || colors[i % colors.length], label: cal.label };
     });
+    const localColor = getComputedStyle(this.el).getPropertyValue("--dash-cal-local").trim() || "#b5836b";
     const start = startOfWeek(/* @__PURE__ */ new Date());
     const days = [];
     for (let d = 0; d < 7; d++) {
@@ -3245,12 +4164,16 @@ var AgendaPanel = class extends BasePanel2 {
           items.push({ item, color: cal.color, label: cal.label });
         }
       }
+      for (const ev of this.ctx.localEvents.filter((e) => e.date === dateStr)) {
+        items.push({ item: localEventToAgendaItem(ev), color: localColor, label: "Event" });
+      }
       items.sort((a, b) => a.item.sortKey - b.item.sortKey || a.item.summary.localeCompare(b.item.summary));
       const todos = this.ctx.todos.itemsForWeekPrint(dateStr).map((t) => t.text);
       days.push({ date, items, todos });
     }
     const legend = calendars.map((c) => ({ label: c.label, color: c.color }));
-    openPrintDocument(buildWeekHtml(days, legend, start));
+    const goals = this.ctx.plugin.weeklyGoalsFor(currentWeekKey()).map((g) => g.text);
+    openPrintDocument(buildWeekHtml(days, legend, start, goals));
   }
 };
 function humanizeFetchError(e) {
@@ -3274,10 +4197,11 @@ function fmtLocal(d) {
 function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
-function buildWeekHtml(days, legend, weekStart) {
+function buildWeekHtml(days, legend, weekStart, goals) {
   const weekEnd = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6);
-  const title = `${(0, import_obsidian24.moment)(weekStart).format("MMMM D")} \u2013 ${(0, import_obsidian24.moment)(weekEnd).format("MMMM D, YYYY")}`;
+  const title = `${(0, import_obsidian27.moment)(weekStart).format("MMMM D")} \u2013 ${(0, import_obsidian27.moment)(weekEnd).format("MMMM D, YYYY")}`;
   const legendHtml = legend.length ? `<div class="legend">${legend.map((l) => `<span class="leg"><span class="dot" style="background:${l.color}"></span>${escapeHtml(l.label)}</span>`).join("")}</div>` : "";
+  const goalsHtml = goals.length ? `<div class="goals"><span class="goals-h">This week's goals</span>${goals.map((g) => `<span class="goal"><span class="todo-box"></span>${escapeHtml(g)}</span>`).join("")}</div>` : "";
   const dayCells = days.map((day) => {
     const events = day.items.map((pi) => {
       const time = pi.item.allDay ? "all day" : escapeHtml(pi.item.timeLabel);
@@ -3292,8 +4216,8 @@ function buildWeekHtml(days, legend, weekStart) {
     const todos = day.todos.length ? `<div class="todos">${day.todos.map((t) => `<div class="todo"><span class="todo-box"></span><span class="todo-text">${escapeHtml(t)}</span></div>`).join("")}</div>` : "";
     return `<section class="day">
 				<header class="day-h">
-					<span class="day-name">${(0, import_obsidian24.moment)(day.date).format("dddd")}</span>
-					<span class="day-date">${(0, import_obsidian24.moment)(day.date).format("MMM D")}</span>
+					<span class="day-name">${(0, import_obsidian27.moment)(day.date).format("dddd")}</span>
+					<span class="day-date">${(0, import_obsidian27.moment)(day.date).format("MMM D")}</span>
 				</header>
 				<div class="events">${events}</div>
 				${todos}
@@ -3335,6 +4259,9 @@ function buildWeekHtml(days, legend, weekStart) {
 	.todo { display: flex; align-items: baseline; gap: 6px; font-size: 11px; }
 	.todo-box { flex: 0 0 auto; width: 9px; height: 9px; border: 1px solid #888; border-radius: 2px; align-self: center; }
 	.todo-text { font-weight: 500; }
+	.goals { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 10px; padding: 6px 8px; border: 1px solid #bbb; border-radius: 6px; font-size: 12px; }
+	.goals-h { font-weight: 700; }
+	.goal { display: inline-flex; align-items: center; gap: 6px; }
 	.write { flex: 1 1 auto; min-height: 22mm; background-image: repeating-linear-gradient(to bottom, transparent, transparent 6mm, #e2e2e2 6mm, #e2e2e2 calc(6mm + 1px)); }
 	.write.tall { min-height: 48mm; }
 	@media print { body { padding: 0; } @page { margin: 12mm; } }
@@ -3342,6 +4269,7 @@ function buildWeekHtml(days, legend, weekStart) {
 <body>
 	<h1>Week at a glance</h1>
 	<div class="sub">${escapeHtml(title)}</div>
+	${goalsHtml}
 	${legendHtml}
 	<div class="grid">${dayCells}${notesCell}</div>
 </body></html>`;
@@ -3384,10 +4312,10 @@ function openPrintDocument(html) {
 }
 
 // src/panels/calendar.ts
-var import_obsidian26 = require("obsidian");
+var import_obsidian29 = require("obsidian");
 
 // src/core/dailynotes.ts
-var import_obsidian25 = require("obsidian");
+var import_obsidian28 = require("obsidian");
 var DATE_LIKE = /^\d{4}-\d{2}-\d{2}/;
 function inFolder(path, folder) {
   return path === folder || path.startsWith(folder + "/");
@@ -3430,9 +4358,9 @@ function makeSnippet(body, idx, len) {
   return s;
 }
 async function ensureDailyNotesBase(app, basePath) {
-  const path = (0, import_obsidian25.normalizePath)(basePath.endsWith(".base") ? basePath : basePath + ".base");
+  const path = (0, import_obsidian28.normalizePath)(basePath.endsWith(".base") ? basePath : basePath + ".base");
   const existing = app.vault.getAbstractFileByPath(path);
-  if (existing instanceof import_obsidian25.TFile) return existing;
+  if (existing instanceof import_obsidian28.TFile) return existing;
   const dir = path.split("/").slice(0, -1).join("/");
   if (dir && !app.vault.getAbstractFileByPath(dir)) {
     await app.vault.createFolder(dir).catch(() => {
@@ -3484,7 +4412,7 @@ var CalendarPanel = class extends BasePanel2 {
       this.cursor = addMonths(this.cursor, -1);
       this.rerender();
     });
-    const label = nav.createSpan({ cls: "dash-cal-month", text: (0, import_obsidian26.moment)(this.cursor).format("MMMM YYYY") });
+    const label = nav.createSpan({ cls: "dash-cal-month", text: (0, import_obsidian29.moment)(this.cursor).format("MMMM YYYY") });
     label.addEventListener("click", () => {
       this.cursor = startOfMonth(/* @__PURE__ */ new Date());
       this.rerender();
@@ -3503,7 +4431,7 @@ var CalendarPanel = class extends BasePanel2 {
     const first = new Date(year, month, 1);
     const leading = first.getDay();
     const start = new Date(year, month, 1 - leading);
-    const todayStr2 = (0, import_obsidian26.moment)().format("YYYY-MM-DD");
+    const todayStr2 = (0, import_obsidian29.moment)().format("YYYY-MM-DD");
     for (let i = 0; i < 42; i++) {
       const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
       const dateStr = fmt(d);
@@ -3511,7 +4439,7 @@ var CalendarPanel = class extends BasePanel2 {
       if (d.getMonth() !== month) cell.addClass("is-outside");
       if (dateStr === todayStr2) cell.addClass("is-today");
       if (getDailyNoteFile(this.ctx.app, dateStr)) cell.addClass("has-note");
-      cell.setAttr("aria-label", (0, import_obsidian26.moment)(d).format("dddd, MMMM D, YYYY"));
+      cell.setAttr("aria-label", (0, import_obsidian29.moment)(d).format("dddd, MMMM D, YYYY"));
       cell.addEventListener("click", () => void this.openDay(dateStr));
     }
   }
@@ -3521,7 +4449,7 @@ var CalendarPanel = class extends BasePanel2 {
       await this.ctx.app.workspace.getLeaf(false).openFile(file);
     } catch (e) {
       console.error("Daily Dashboard: could not open the daily note", e);
-      new import_obsidian26.Notice("Couldn't open that day's note.");
+      new import_obsidian29.Notice("Couldn't open that day's note.");
     }
   }
   // -------------------------------------------------------------- base button
@@ -3535,7 +4463,7 @@ var CalendarPanel = class extends BasePanel2 {
         await this.ctx.app.workspace.getLeaf(false).openFile(file);
       } catch (e) {
         console.error("Daily Dashboard: could not open the daily-notes base", e);
-        new import_obsidian26.Notice("Couldn't open the daily-notes table. Check the base file path in settings.");
+        new import_obsidian29.Notice("Couldn't open the daily-notes table. Check the base file path in settings.");
       }
     });
   }
@@ -3594,7 +4522,906 @@ function fmt(d) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+// src/shopping.ts
+var import_obsidian30 = require("obsidian");
+var DEFAULT_LISTS = ["Groceries", "Shopping"];
+function genId() {
+  const c = globalThis.crypto;
+  if (c == null ? void 0 : c.randomUUID) return c.randomUUID();
+  return "s-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+}
+function shoppingPath(plugin) {
+  let p = (plugin.settings.shoppingPath || "Shopping.md").trim();
+  if (!/\.md$/i.test(p)) p += ".md";
+  return (0, import_obsidian30.normalizePath)(p);
+}
+function normItem(raw) {
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw;
+  const name = String((_a = o.name) != null ? _a : "").trim();
+  if (!name) return null;
+  return {
+    id: String((_b = o.id) != null ? _b : "") || genId(),
+    list: String((_c = o.list) != null ? _c : "").trim() || DEFAULT_LISTS[0],
+    name,
+    qty: String((_d = o.qty) != null ? _d : "").trim(),
+    unit: String((_e = o.unit) != null ? _e : "").trim(),
+    section: String((_f = o.section) != null ? _f : "").trim(),
+    store: String((_g = o.store) != null ? _g : "").trim(),
+    payer: String((_h = o.payer) != null ? _h : "").trim(),
+    note: String((_i = o.note) != null ? _i : "").trim(),
+    checked: !!o.checked
+  };
+}
+function defaultStore() {
+  return { items: [], lists: [...DEFAULT_LISTS] };
+}
+async function loadShopping(plugin) {
+  const app = plugin.app;
+  const f = app.vault.getAbstractFileByPath(shoppingPath(plugin));
+  if (!(f instanceof import_obsidian30.TFile)) return defaultStore();
+  try {
+    const parsed = JSON.parse(await app.vault.read(f));
+    const items = Array.isArray(parsed.items) ? parsed.items.map(normItem).filter((x) => !!x) : [];
+    const listSet = new Set(Array.isArray(parsed.lists) ? parsed.lists.map((l) => String(l).trim()).filter(Boolean) : []);
+    for (const l of DEFAULT_LISTS) listSet.add(l);
+    for (const it of items) listSet.add(it.list);
+    return { items, lists: [...listSet] };
+  } catch (e) {
+    return defaultStore();
+  }
+}
+async function saveShopping(plugin, store) {
+  const app = plugin.app;
+  const path = shoppingPath(plugin);
+  const dir = path.split("/").slice(0, -1).join("/");
+  if (dir && !app.vault.getAbstractFileByPath(dir)) await app.vault.createFolder(dir).catch(() => {
+  });
+  const content = JSON.stringify(store, null, 2);
+  const existing = app.vault.getAbstractFileByPath(path);
+  if (existing instanceof import_obsidian30.TFile) await app.vault.modify(existing, content);
+  else await app.vault.create(path, content);
+}
+function blankItem(list, p = {}) {
+  return { id: genId(), list, name: "", qty: "", unit: "", section: "", store: "", payer: "", note: "", checked: false, ...p };
+}
+async function addItem(plugin, item) {
+  const store = await loadShopping(plugin);
+  if (!store.lists.includes(item.list)) store.lists.push(item.list);
+  store.items.push(item);
+  await saveShopping(plugin, store);
+}
+async function updateItem(plugin, id, patch) {
+  const store = await loadShopping(plugin);
+  const it = store.items.find((x) => x.id === id);
+  if (!it) return;
+  Object.assign(it, patch);
+  if (patch.list && !store.lists.includes(patch.list)) store.lists.push(patch.list);
+  await saveShopping(plugin, store);
+}
+async function deleteItem(plugin, id) {
+  const store = await loadShopping(plugin);
+  store.items = store.items.filter((x) => x.id !== id);
+  await saveShopping(plugin, store);
+}
+async function toggleItem(plugin, id) {
+  const store = await loadShopping(plugin);
+  const it = store.items.find((x) => x.id === id);
+  if (!it) return;
+  it.checked = !it.checked;
+  await saveShopping(plugin, store);
+}
+async function clearChecked(plugin, list) {
+  const store = await loadShopping(plugin);
+  const before = store.items.length;
+  store.items = store.items.filter((x) => !(x.list === list && x.checked));
+  const removed = before - store.items.length;
+  if (removed) await saveShopping(plugin, store);
+  return removed;
+}
+async function addList(plugin, name) {
+  const n = name.trim();
+  if (!n) return;
+  const store = await loadShopping(plugin);
+  if (!store.lists.includes(n)) {
+    store.lists.push(n);
+    await saveShopping(plugin, store);
+  }
+}
+function itemsFor(store, list) {
+  return store.items.filter((x) => x.list === list);
+}
+function groupBySection(items) {
+  return groupBy(items, (i) => i.section.trim() || "Uncategorised");
+}
+function groupByStore(items) {
+  return groupBy(items, (i) => i.store.trim() || "Any store");
+}
+function groupBy(items, key) {
+  var _a;
+  const map = /* @__PURE__ */ new Map();
+  for (const it of items) {
+    const k = key(it);
+    ((_a = map.get(k)) != null ? _a : map.set(k, []).get(k)).push(it);
+  }
+  const groups = [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  for (const [, list] of groups) {
+    list.sort((a, b) => Number(a.checked) - Number(b.checked) || a.name.localeCompare(b.name));
+  }
+  return groups;
+}
+function listSummary(items) {
+  var _a;
+  const total = items.length;
+  const checked = items.filter((i) => i.checked).length;
+  const payers = /* @__PURE__ */ new Map();
+  for (const i of items) {
+    const p = i.payer.trim() || "\u2014";
+    payers.set(p, ((_a = payers.get(p)) != null ? _a : 0) + 1);
+  }
+  const byPayer = [...payers.entries()].filter(([p]) => p !== "\u2014").sort((a, b) => b[1] - a[1]);
+  return { total, checked, byPayer };
+}
+function parseGroceryNote(content, list) {
+  const out = [];
+  for (const raw of content.split("\n")) {
+    const m = raw.match(/^\s*[-*]\s+\[([ xX])\]\s+(.*)$/);
+    if (!m) continue;
+    const checked = m[1].toLowerCase() === "x";
+    let body = m[2].trim();
+    if (/already stocked/i.test(body)) continue;
+    let qty = "";
+    let unit = "";
+    const amt = body.match(/^\*\*(.+?)\*\*\s*(.*)$/);
+    if (amt) {
+      const amount = amt[1].trim();
+      body = amt[2].trim();
+      const qm = amount.match(/^([\d./\s-]+)\s*(.*)$/);
+      if (qm && qm[1].trim()) {
+        qty = qm[1].trim();
+        unit = qm[2].trim();
+      } else {
+        unit = amount;
+      }
+    }
+    body = body.replace(/\s*—\s*to taste\s*$/i, "").replace(/\s*\*\([^)]*\)\*\s*$/, "").replace(/^\*\*|\*\*$/g, "").trim();
+    if (!body) continue;
+    out.push(blankItem(list, { name: body, qty, unit, checked, section: "", store: "", payer: "" }));
+  }
+  return out;
+}
+
+// src/shopping-manager.ts
+var import_obsidian32 = require("obsidian");
+
+// src/ui/sheet.ts
+var import_obsidian31 = require("obsidian");
+var SheetModal = class extends import_obsidian31.Modal {
+  constructor(app) {
+    super(app);
+    this.vvHandler = null;
+  }
+  onOpen() {
+    this.modalEl.addClass("dash-sheet");
+    if (import_obsidian31.Platform.isMobile) {
+      this.modalEl.addClass("dash-sheet-mobile");
+      this.trackKeyboard();
+    }
+    this.contentEl.addClass("dash-sheet-body");
+    this.renderBody(this.contentEl);
+  }
+  /** Lift the sheet by the keyboard's height so fields are never hidden behind it. */
+  trackKeyboard() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const apply = () => {
+      const keyboard = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      this.modalEl.style.marginBottom = `${keyboard}px`;
+      this.modalEl.style.maxHeight = `${vv.height - 12}px`;
+    };
+    this.vvHandler = apply;
+    vv.addEventListener("resize", apply);
+    apply();
+  }
+  onClose() {
+    var _a;
+    if (this.vvHandler) (_a = window.visualViewport) == null ? void 0 : _a.removeEventListener("resize", this.vvHandler);
+    this.vvHandler = null;
+    this.contentEl.empty();
+  }
+};
+
+// src/shopping-manager.ts
+function distinct(store, key) {
+  var _a;
+  const set = /* @__PURE__ */ new Set();
+  for (const i of store.items) {
+    const v = String((_a = i[key]) != null ? _a : "").trim();
+    if (v) set.add(v);
+  }
+  return [...set].sort();
+}
+var ShoppingManagerModal = class extends SheetModal {
+  constructor(app, plugin, list, onChange) {
+    super(app);
+    this.plugin = plugin;
+    this.onChange = onChange;
+    this.groupMode = "section";
+    this.storeFilter = "";
+    this.payerFilter = "";
+    this.list = list != null ? list : "Groceries";
+  }
+  renderBody(root) {
+    root.addClass("shopping");
+    this.titleEl.setText("Shopping");
+    this.body = root.createDiv();
+    void this.refresh();
+  }
+  async refresh() {
+    var _a, _b;
+    this.store = await loadShopping(this.plugin);
+    if (!this.store.lists.includes(this.list)) this.list = (_a = this.store.lists[0]) != null ? _a : "Groceries";
+    this.paint();
+    (_b = this.onChange) == null ? void 0 : _b.call(this);
+  }
+  async mutate(fn) {
+    await fn();
+    await this.refresh();
+  }
+  paint() {
+    const c = this.body;
+    c.empty();
+    const top = c.createDiv({ cls: "shopping-top" });
+    const sel = top.createEl("select", { cls: "shopping-select" });
+    for (const l of this.store.lists) {
+      const opt = sel.createEl("option", { text: l });
+      if (l === this.list) opt.selected = true;
+    }
+    sel.addEventListener("change", () => {
+      this.list = sel.value;
+      this.storeFilter = "";
+      this.payerFilter = "";
+      this.paint();
+    });
+    top.createEl("button", { cls: "dash-btn", text: "New list" }).addEventListener("click", () => this.promptNewList());
+    top.createEl("button", { cls: "dash-btn dash-btn-primary", text: "\uFF0B Item" }).addEventListener(
+      "click",
+      () => new ShoppingItemModal(this.app, this.plugin, this.list, null, () => void this.refresh()).open()
+    );
+    const items = itemsFor(this.store, this.list);
+    const stores = [...new Set(items.map((i) => i.store.trim()).filter(Boolean))].sort();
+    const payers = [...new Set(items.map((i) => i.payer.trim()).filter(Boolean))].sort();
+    const filters = c.createDiv({ cls: "shopping-filters" });
+    if (stores.length) this.filterSelect(filters, "Store", stores, this.storeFilter, (v) => {
+      this.storeFilter = v;
+      this.paint();
+    });
+    if (payers.length) this.filterSelect(filters, "Payer", payers, this.payerFilter, (v) => {
+      this.payerFilter = v;
+      this.paint();
+    });
+    const grp = filters.createDiv({ cls: "shopping-group-toggle" });
+    this.groupBtn(grp, "Aisle", "section");
+    this.groupBtn(grp, "Store", "store");
+    let shown = items;
+    if (this.storeFilter) shown = shown.filter((i) => i.store.trim() === this.storeFilter);
+    if (this.payerFilter) shown = shown.filter((i) => i.payer.trim() === this.payerFilter);
+    const listEl = c.createDiv({ cls: "shopping-list" });
+    if (items.length === 0) {
+      listEl.createDiv({ cls: "dash-empty", text: "This list is empty. Add an item, or import a recipe grocery list below." });
+    } else if (shown.length === 0) {
+      listEl.createDiv({ cls: "dash-empty", text: "Nothing matches those filters." });
+    } else {
+      const groups = this.groupMode === "section" ? groupBySection(shown) : groupByStore(shown);
+      for (const [heading, group] of groups) {
+        listEl.createDiv({ cls: "shopping-section", text: heading });
+        for (const it of group) this.itemRow(listEl, it);
+      }
+    }
+    const sum = listSummary(items);
+    const footer = c.createDiv({ cls: "shopping-footer" });
+    const status = footer.createDiv({ cls: "shopping-status" });
+    status.createSpan({ text: `${sum.checked} of ${sum.total} got` });
+    if (sum.byPayer.length) status.createSpan({ cls: "shopping-payers", text: "  \xB7  " + sum.byPayer.map(([p, n]) => `${p}: ${n}`).join(", ") });
+    const actions = footer.createDiv({ cls: "shopping-actions" });
+    if (sum.checked > 0) actions.createEl("button", { cls: "dash-btn", text: "Clear got items" }).addEventListener(
+      "click",
+      () => void this.mutate(async () => {
+        const n = await clearChecked(this.plugin, this.list);
+        new import_obsidian32.Notice(`Removed ${n} item${n === 1 ? "" : "s"}.`);
+      })
+    );
+    actions.createEl("button", { cls: "dash-btn", text: "Import recipe groceries" }).addEventListener("click", () => void this.importGroceries());
+  }
+  filterSelect(parent, label, options, value, onChange) {
+    const wrap = parent.createDiv({ cls: "shopping-filter" });
+    wrap.createSpan({ cls: "shopping-filter-label", text: label });
+    const sel = wrap.createEl("select");
+    const all = sel.createEl("option", { text: `All`, value: "" });
+    if (!value) all.selected = true;
+    for (const o of options) {
+      const opt = sel.createEl("option", { text: o, value: o });
+      if (o === value) opt.selected = true;
+    }
+    sel.addEventListener("change", () => onChange(sel.value));
+  }
+  groupBtn(parent, label, mode) {
+    const b = parent.createEl("button", { cls: "dash-btn shopping-grp" + (this.groupMode === mode ? " is-on" : ""), text: label });
+    b.addEventListener("click", () => {
+      this.groupMode = mode;
+      this.paint();
+    });
+  }
+  itemRow(parent, it) {
+    const row = parent.createDiv({ cls: "shopping-item" + (it.checked ? " is-checked" : "") });
+    const box = row.createEl("input", { type: "checkbox" });
+    box.checked = it.checked;
+    box.addEventListener("change", () => void this.mutate(() => toggleItem(this.plugin, it.id)));
+    const main = row.createDiv({ cls: "shopping-item-main" });
+    const amount = [it.qty, it.unit].filter(Boolean).join(" ");
+    const label = main.createDiv({ cls: "shopping-item-name" });
+    if (amount) label.createSpan({ cls: "shopping-item-qty", text: amount + " " });
+    label.createSpan({ text: it.name });
+    const chips = main.createDiv({ cls: "shopping-item-chips" });
+    if (this.groupMode !== "store" && it.store) chips.createSpan({ cls: "dash-chip", text: it.store });
+    if (it.payer) chips.createSpan({ cls: "dash-chip dash-chip-cold", text: it.payer });
+    if (it.note) chips.createSpan({ cls: "shopping-item-note", text: it.note });
+    const acts = row.createDiv({ cls: "shopping-item-actions" });
+    acts.createEl("button", { cls: "shopping-icon", text: "\u270E", attr: { "aria-label": "Edit" } }).addEventListener(
+      "click",
+      () => new ShoppingItemModal(this.app, this.plugin, this.list, it, () => void this.refresh()).open()
+    );
+    acts.createEl("button", { cls: "shopping-icon", text: "\u{1F5D1}", attr: { "aria-label": "Delete" } }).addEventListener(
+      "click",
+      () => void this.mutate(() => deleteItem(this.plugin, it.id))
+    );
+  }
+  promptNewList() {
+    const modal = new SheetPrompt(this.app, "New list", "e.g. Hardware store", async (name) => {
+      if (!name.trim()) return;
+      await addList(this.plugin, name.trim());
+      this.list = name.trim();
+      await this.refresh();
+    });
+    modal.open();
+  }
+  async importGroceries() {
+    const path = this.plugin.bridge.groceryListPath();
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof import_obsidian32.TFile)) {
+      new import_obsidian32.Notice(`No grocery note found at "${path}". Generate one from the recipe manager first.`);
+      return;
+    }
+    const parsed = parseGroceryNote(await this.app.vault.read(file), this.list);
+    if (parsed.length === 0) {
+      new import_obsidian32.Notice("No grocery items found to import.");
+      return;
+    }
+    await this.mutate(async () => {
+      const store = await loadShopping(this.plugin);
+      const existing = new Set(itemsFor(store, this.list).map((i) => i.name.toLowerCase()));
+      let added = 0;
+      for (const it of parsed) {
+        if (existing.has(it.name.toLowerCase())) continue;
+        store.items.push(it);
+        added++;
+      }
+      await saveShopping(this.plugin, store);
+      new import_obsidian32.Notice(`Imported ${added} item${added === 1 ? "" : "s"} into ${this.list}.`);
+    });
+  }
+};
+var ShoppingItemModal = class extends SheetModal {
+  constructor(app, plugin, list, existing, onDone) {
+    super(app);
+    this.plugin = plugin;
+    this.existing = existing;
+    this.onDone = onDone;
+    this.isNew = existing === null;
+    this.draft = existing ? { ...existing } : blankItem(list);
+  }
+  renderBody(root) {
+    root.addClass("shopping-item-edit");
+    this.titleEl.setText(this.isNew ? "Add item" : "Edit item");
+    void this.build(root);
+  }
+  async build(root) {
+    const store = await loadShopping(this.plugin);
+    new import_obsidian32.Setting(root).setName("Item").addText((t) => t.setValue(this.draft.name).setPlaceholder("e.g. milk").onChange((v) => this.draft.name = v));
+    const amount = root.createDiv({ cls: "shopping-amount-row" });
+    new import_obsidian32.Setting(amount).setName("Qty").addText((t) => t.setValue(this.draft.qty).setPlaceholder("2").onChange((v) => this.draft.qty = v));
+    this.datalistField(amount, "Measure", "unit", store, this.draft.unit, "gal, lb, box", (v) => this.draft.unit = v);
+    this.datalistField(root, "Section (aisle)", "section", store, this.draft.section, "Produce, Dairy\u2026", (v) => this.draft.section = v);
+    this.datalistField(root, "Store", "store", store, this.draft.store, "Kroger, Target\u2026", (v) => this.draft.store = v);
+    this.datalistField(root, "Who's paying", "payer", store, this.draft.payer, "Me, Parents\u2026", (v) => this.draft.payer = v);
+    new import_obsidian32.Setting(root).setName("List").addDropdown((d) => {
+      var _a;
+      for (const l of store.lists) d.addOption(l, l);
+      d.setValue(store.lists.includes(this.draft.list) ? this.draft.list : (_a = store.lists[0]) != null ? _a : this.draft.list);
+      d.onChange((v) => this.draft.list = v);
+    });
+    new import_obsidian32.Setting(root).setName("Note").addText((t) => t.setValue(this.draft.note).setPlaceholder("optional").onChange((v) => this.draft.note = v));
+    const btns = root.createDiv({ cls: "shopping-edit-buttons" });
+    btns.createEl("button", { cls: "dash-btn dash-btn-primary", text: this.isNew ? "Add item" : "Save" }).addEventListener("click", () => void this.save());
+  }
+  datalistField(parent, label, key, store, value, placeholder, onChange) {
+    new import_obsidian32.Setting(parent).setName(label).addText((t) => {
+      t.setValue(value).setPlaceholder(placeholder).onChange((v) => onChange(v));
+      const id = `sl-${String(key)}-${Math.random().toString(36).slice(2, 7)}`;
+      const dl = t.inputEl.ownerDocument.createElement("datalist");
+      dl.id = id;
+      for (const v of distinct(store, key)) {
+        const opt = dl.ownerDocument.createElement("option");
+        opt.value = v;
+        dl.appendChild(opt);
+      }
+      t.inputEl.setAttribute("list", id);
+      t.inputEl.after(dl);
+    });
+  }
+  async save() {
+    if (!this.draft.name.trim()) {
+      new import_obsidian32.Notice("Give the item a name.");
+      return;
+    }
+    this.draft.name = this.draft.name.trim();
+    if (this.isNew) await addItem(this.plugin, this.draft);
+    else await updateItem(this.plugin, this.existing.id, this.draft);
+    new import_obsidian32.Notice(this.isNew ? "Item added." : "Item updated.");
+    this.onDone();
+    this.close();
+  }
+};
+var SheetPrompt = class extends SheetModal {
+  constructor(app, heading, placeholder, onSubmit) {
+    super(app);
+    this.heading = heading;
+    this.placeholder = placeholder;
+    this.onSubmit = onSubmit;
+    this.value = "";
+  }
+  renderBody(root) {
+    this.titleEl.setText(this.heading);
+    new import_obsidian32.Setting(root).addText((t) => {
+      t.setPlaceholder(this.placeholder).onChange((v) => this.value = v);
+      t.inputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          void this.submit();
+        }
+      });
+    });
+    root.createEl("button", { cls: "dash-btn dash-btn-primary", text: "Create" }).addEventListener("click", () => void this.submit());
+  }
+  async submit() {
+    await this.onSubmit(this.value);
+    this.close();
+  }
+};
+
+// src/panels/shopping.ts
+var ShoppingPanel = class extends BasePanel2 {
+  constructor() {
+    super(...arguments);
+    this.id = "shopping";
+    this.title = "Shopping";
+  }
+  async renderBody() {
+    var _a;
+    const head = placard2(this.el, "Shopping");
+    const tools = head.createDiv({ cls: "dash-qotd-tools" });
+    tools.createEl("button", { cls: "dash-qotd-add", text: "\uFF0B", attr: { "aria-label": "Add an item" } }).addEventListener("click", () => this.add());
+    tools.createEl("button", { cls: "dash-qotd-add", text: "\u2630", attr: { "aria-label": "Open the shopping list" } }).addEventListener("click", () => this.open());
+    const store = await loadShopping(this.ctx.plugin);
+    const card = this.el.createDiv({ cls: "shopping-card" });
+    const withItems = store.lists.filter((l) => itemsFor(store, l).length > 0);
+    if (withItems.length === 0) {
+      card.createDiv({ cls: "dash-muted", text: "Nothing on your lists yet. Add an item, or bring in a Recipe Manager grocery list from \u201COpen list\u201D." });
+      card.createEl("button", { cls: "dash-qotd-addbig", text: "Add an item" }).addEventListener("click", () => this.add());
+      return;
+    }
+    const chips = card.createDiv({ cls: "shopping-card-lists" });
+    for (const l of withItems) {
+      const items = itemsFor(store, l);
+      const left = items.filter((i) => !i.checked).length;
+      const chip = chips.createEl("button", { cls: "shopping-card-chip", text: `${l} \xB7 ${left} left` });
+      chip.addEventListener("click", () => this.open(l));
+    }
+    const active = (_a = withItems.find((l) => itemsFor(store, l).some((i) => !i.checked))) != null ? _a : withItems[0];
+    this.preview(card, store, active);
+  }
+  preview(card, store, list) {
+    const unchecked = itemsFor(store, list).filter((i) => !i.checked);
+    if (unchecked.length === 0) {
+      card.createDiv({ cls: "dash-muted", text: `${list}: all got. Nice.` });
+      return;
+    }
+    const wrap = card.createDiv({ cls: "shopping-card-preview" });
+    const groups = groupBySection(unchecked);
+    let shown = 0;
+    const LIMIT = 8;
+    outer: for (const [section, group] of groups) {
+      wrap.createDiv({ cls: "shopping-card-section", text: section });
+      for (const it of group) {
+        if (shown >= LIMIT) break outer;
+        shown++;
+        const row = wrap.createDiv({ cls: "shopping-card-item" });
+        const box = row.createEl("input", { type: "checkbox" });
+        box.addEventListener("change", () => void toggleItem(this.ctx.plugin, it.id).then(() => this.ctx.requestRefresh("manual")));
+        const amount = [it.qty, it.unit].filter(Boolean).join(" ");
+        row.createSpan({ cls: "shopping-card-item-text", text: (amount ? amount + " " : "") + it.name });
+        if (it.payer) row.createSpan({ cls: "dash-chip dash-chip-cold", text: it.payer });
+      }
+    }
+    const remaining = unchecked.length - shown;
+    const foot = card.createDiv({ cls: "shopping-card-foot" });
+    if (remaining > 0) foot.createSpan({ cls: "dash-muted", text: `+${remaining} more` });
+    foot.createEl("button", { cls: "dash-qotd-addbig", text: "Open list" }).addEventListener("click", () => this.open(list));
+  }
+  add() {
+    new ShoppingItemModal(this.ctx.app, this.ctx.plugin, "Groceries", null, () => this.ctx.requestRefresh("manual")).open();
+  }
+  open(list) {
+    new ShoppingManagerModal(this.ctx.app, this.ctx.plugin, list, () => this.ctx.requestRefresh("manual")).open();
+  }
+};
+
+// src/quotes.ts
+var import_obsidian33 = require("obsidian");
+function genId2() {
+  const c = globalThis.crypto;
+  if (c == null ? void 0 : c.randomUUID) return c.randomUUID();
+  return "q-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+}
+function quotesPath(plugin) {
+  let p = (plugin.settings.quotesPath || "Quotes.md").trim();
+  if (!/\.md$/i.test(p)) p += ".md";
+  return (0, import_obsidian33.normalizePath)(p);
+}
+function normalize(q) {
+  var _a, _b, _c, _d;
+  if (!q || typeof q !== "object") return null;
+  const o = q;
+  const text = String((_a = o.text) != null ? _a : "").trim();
+  if (!text) return null;
+  return {
+    id: String((_b = o.id) != null ? _b : "") || genId2(),
+    text,
+    author: String((_c = o.author) != null ? _c : "").trim(),
+    date: /^\d{4}-\d{2}-\d{2}$/.test(String((_d = o.date) != null ? _d : "")) ? String(o.date) : ""
+  };
+}
+function parseLegacyMarkdown(content) {
+  var _a;
+  const out = [];
+  for (const rawLine of content.split("\n")) {
+    const line = rawLine.trim();
+    if (!line.startsWith("-")) continue;
+    let body = line.replace(/^-\s*/, "").trim();
+    if (!body) continue;
+    let date = "";
+    const dm = body.match(/\s*\((\d{4}-\d{2}-\d{2})\)\s*$/);
+    if (dm) {
+      date = dm[1];
+      body = body.slice(0, dm.index).trim();
+    }
+    let text = "";
+    let author = "";
+    let m = body.match(/^[“"](.+)[”"]\s*(?:[—–-]\s*(.+))?$/);
+    if (m) {
+      text = m[1].trim();
+      author = ((_a = m[2]) != null ? _a : "").trim();
+    } else {
+      m = body.match(/^(.+?)\s+[—–]\s+(.+)$/);
+      if (m) {
+        text = m[1].trim();
+        author = m[2].trim();
+      } else {
+        text = body;
+      }
+    }
+    if (text) out.push({ id: genId2(), text, author, date });
+  }
+  return out;
+}
+function tryParseStore(raw) {
+  try {
+    const p = JSON.parse(raw);
+    if (Array.isArray(p)) return { quotes: p.map(normalize).filter((q) => !!q) };
+    if (p && typeof p === "object" && Array.isArray(p.quotes)) {
+      return { quotes: p.quotes.map(normalize).filter((q) => !!q) };
+    }
+  } catch (e) {
+  }
+  return null;
+}
+async function loadStore(plugin) {
+  const app = plugin.app;
+  const f = app.vault.getAbstractFileByPath(quotesPath(plugin));
+  if (!(f instanceof import_obsidian33.TFile)) return { quotes: [] };
+  const raw = await app.vault.read(f);
+  const parsed = tryParseStore(raw);
+  if (parsed) return parsed;
+  const migrated = { quotes: parseLegacyMarkdown(raw) };
+  await saveStore(plugin, migrated);
+  return migrated;
+}
+async function saveStore(plugin, store) {
+  const app = plugin.app;
+  const path = quotesPath(plugin);
+  const dir = path.split("/").slice(0, -1).join("/");
+  if (dir && !app.vault.getAbstractFileByPath(dir)) await app.vault.createFolder(dir).catch(() => {
+  });
+  const content = JSON.stringify(store, null, 2);
+  const existing = app.vault.getAbstractFileByPath(path);
+  if (existing instanceof import_obsidian33.TFile) await app.vault.modify(existing, content);
+  else await app.vault.create(path, content);
+}
+async function loadQuotes(plugin) {
+  return (await loadStore(plugin)).quotes;
+}
+async function addQuote(plugin, q) {
+  const store = await loadStore(plugin);
+  store.quotes.push({ id: genId2(), text: q.text.trim(), author: q.author.trim(), date: q.date.trim() });
+  await saveStore(plugin, store);
+}
+async function updateQuote(plugin, id, patch) {
+  const store = await loadStore(plugin);
+  const found = store.quotes.find((x) => x.id === id);
+  if (!found) return;
+  found.text = patch.text.trim();
+  found.author = patch.author.trim();
+  found.date = patch.date.trim();
+  await saveStore(plugin, store);
+}
+async function deleteQuote(plugin, id) {
+  const store = await loadStore(plugin);
+  store.quotes = store.quotes.filter((x) => x.id !== id);
+  await saveStore(plugin, store);
+}
+function quoteForDay(quotes, date) {
+  const n = quotes.length;
+  if (n === 0) return null;
+  const day = date != null ? date : (0, import_obsidian33.moment)().format("YYYY-MM-DD");
+  const sameDay = quotes.find((q) => q.date === day);
+  if (sameDay) return sameDay;
+  const m = (0, import_obsidian33.moment)(day, "YYYY-MM-DD");
+  const dayNumber = Math.floor(m.valueOf() / 864e5);
+  const idx = (dayNumber % n + n) % n;
+  return quotes[idx];
+}
+
+// src/quote-catalogue.ts
+var import_obsidian34 = require("obsidian");
+var QuoteEditModal = class extends SheetModal {
+  constructor(app, plugin, existing, onDone) {
+    var _a, _b, _c;
+    super(app);
+    this.plugin = plugin;
+    this.existing = existing;
+    this.onDone = onDone;
+    this.isNew = existing === null;
+    this.text = (_a = existing == null ? void 0 : existing.text) != null ? _a : "";
+    this.author = (_b = existing == null ? void 0 : existing.author) != null ? _b : "";
+    this.date = (_c = existing == null ? void 0 : existing.date) != null ? _c : "";
+  }
+  renderBody(root) {
+    root.addClass("quote-edit");
+    this.titleEl.setText(this.isNew ? "Add a quote" : "Edit quote");
+    if (this.isNew) root.createDiv({ cls: "dash-empty", text: "Something someone said that you want to remember. Date it today to make it today's Quote of the Day." });
+    new import_obsidian34.Setting(root).setName("Quote").addTextArea((t) => t.setValue(this.text).setPlaceholder("What they said").onChange((v) => this.text = v));
+    new import_obsidian34.Setting(root).setName("Who said it").addText((t) => t.setValue(this.author).setPlaceholder("e.g. Alex (optional)").onChange((v) => this.author = v));
+    let dateInput;
+    new import_obsidian34.Setting(root).setName("Date spoken / recorded").setDesc("Optional. A quote dated today becomes the Quote of the Day.").addText((t) => {
+      t.inputEl.type = "date";
+      dateInput = t.inputEl;
+      t.setValue(this.date).onChange((v) => this.date = v);
+    }).addExtraButton(
+      (b) => b.setIcon("calendar-clock").setTooltip("Today").onClick(() => {
+        this.date = (0, import_obsidian34.moment)().format("YYYY-MM-DD");
+        dateInput.value = this.date;
+      })
+    );
+    const btns = root.createDiv({ cls: "quote-edit-buttons" });
+    btns.createEl("button", { cls: "dash-btn dash-btn-primary", text: this.isNew ? "Add quote" : "Save" }).addEventListener("click", () => void this.save());
+  }
+  async save() {
+    var _a;
+    if (!this.text.trim()) {
+      new import_obsidian34.Notice("Type the quote first.");
+      return;
+    }
+    const payload = { text: this.text, author: this.author, date: this.date };
+    if (this.isNew) await addQuote(this.plugin, payload);
+    else await updateQuote(this.plugin, this.existing.id, payload);
+    new import_obsidian34.Notice(this.isNew ? "Quote added." : "Quote updated.");
+    (_a = this.onDone) == null ? void 0 : _a.call(this);
+    this.close();
+  }
+};
+var QuoteCatalogueModal = class extends SheetModal {
+  constructor(app, plugin, onChange) {
+    super(app);
+    this.plugin = plugin;
+    this.onChange = onChange;
+    this.query = "";
+    this.quotes = [];
+  }
+  renderBody(root) {
+    root.addClass("quote-catalogue");
+    this.titleEl.setText("Quotes");
+    const bar = root.createDiv({ cls: "quote-bar" });
+    bar.createEl("button", { cls: "dash-btn dash-btn-primary", text: "\uFF0B Add quote" }).addEventListener(
+      "click",
+      () => new QuoteEditModal(this.app, this.plugin, null, () => void this.refresh()).open()
+    );
+    const search = bar.createEl("input", { cls: "quote-search", attr: { type: "search", placeholder: "Search quotes or people\u2026" } });
+    search.addEventListener("input", () => {
+      this.query = search.value.trim().toLowerCase();
+      this.paint();
+    });
+    this.container = root.createDiv({ cls: "quote-list" });
+    void this.refresh();
+  }
+  async refresh() {
+    var _a;
+    this.quotes = await loadQuotes(this.plugin);
+    this.paint();
+    (_a = this.onChange) == null ? void 0 : _a.call(this);
+  }
+  paint() {
+    const c = this.container;
+    c.empty();
+    const q = this.query;
+    const list = q ? this.quotes.filter((x) => x.text.toLowerCase().includes(q) || x.author.toLowerCase().includes(q) || x.date.includes(q)) : this.quotes;
+    if (this.quotes.length === 0) {
+      c.createDiv({ cls: "dash-empty", text: "No quotes yet. Add things people have said \u2014 they'll show up as the Quote of the Day." });
+      return;
+    }
+    if (list.length === 0) {
+      c.createDiv({ cls: "dash-empty", text: `No quotes match \u201C${this.query}\u201D.` });
+      return;
+    }
+    c.createDiv({ cls: "quote-count", text: `${list.length} of ${this.quotes.length} quote${this.quotes.length === 1 ? "" : "s"}` });
+    for (const quote of list) this.row(c, quote);
+  }
+  row(parent, quote) {
+    const row = parent.createDiv({ cls: "quote-item" });
+    row.createDiv({ cls: "quote-item-text", text: `\u201C${quote.text}\u201D` });
+    const meta = [];
+    if (quote.author) meta.push(quote.author);
+    if (quote.date) meta.push(quote.date);
+    if (meta.length) row.createDiv({ cls: "quote-item-meta", text: meta.join(" \xB7 ") });
+    const actions = row.createDiv({ cls: "quote-item-actions" });
+    actions.createEl("button", { cls: "dash-btn", text: "Edit" }).addEventListener(
+      "click",
+      () => new QuoteEditModal(this.app, this.plugin, quote, () => void this.refresh()).open()
+    );
+    actions.createEl("button", { cls: "dash-btn quote-danger", text: "Delete" }).addEventListener("click", () => void this.remove(quote));
+  }
+  async remove(quote) {
+    await deleteQuote(this.plugin, quote.id);
+    new import_obsidian34.Notice("Quote deleted.");
+    await this.refresh();
+  }
+};
+
+// src/panels/quote.ts
+var QuotePanel = class extends BasePanel2 {
+  constructor() {
+    super(...arguments);
+    this.id = "quote";
+    this.title = "Quote of the Day";
+  }
+  async renderBody() {
+    const head = placard2(this.el, "Quote of the Day");
+    const tools = head.createDiv({ cls: "dash-qotd-tools" });
+    tools.createEl("button", { cls: "dash-qotd-add", text: "\uFF0B", attr: { "aria-label": "Add a quote" } }).addEventListener("click", () => this.openAdd());
+    tools.createEl("button", { cls: "dash-qotd-add", text: "\u2630", attr: { "aria-label": "Open the quotes catalogue" } }).addEventListener("click", () => this.openCatalogue());
+    const card = this.el.createDiv({ cls: "dash-qotd" });
+    const quotes = await loadQuotes(this.ctx.plugin);
+    if (quotes.length === 0) {
+      card.createDiv({ cls: "dash-muted", text: "No quotes yet. Add things people have said that made you smile, and one will show up here each day." });
+      card.createEl("button", { cls: "dash-qotd-addbig", text: "Add a quote" }).addEventListener("click", () => this.openAdd());
+      return;
+    }
+    const q = quoteForDay(quotes);
+    const mark = card.createDiv({ cls: "dash-qotd-mark", text: "\u201C" });
+    mark.setAttribute("aria-hidden", "true");
+    card.createDiv({ cls: "dash-qotd-text", text: q.text });
+    const attribution = [];
+    if (q.author) attribution.push(q.author);
+    if (q.date) attribution.push(q.date);
+    if (attribution.length) card.createDiv({ cls: "dash-qotd-author", text: `\u2014 ${attribution.join(", ")}` });
+  }
+  openAdd() {
+    new QuoteEditModal(this.ctx.app, this.ctx.plugin, null, () => this.ctx.requestRefresh("manual")).open();
+  }
+  openCatalogue() {
+    new QuoteCatalogueModal(this.ctx.app, this.ctx.plugin, () => this.ctx.requestRefresh("manual")).open();
+  }
+};
+
+// src/weekreview.ts
+var import_obsidian35 = require("obsidian");
+
+// src/core/journalfields.ts
+var JOURNAL_FIELDS = {
+  braindump: { label: "Brain dump", spec: headingField("Brain dump") },
+  journal: { label: "Journal", spec: headingField("Journal") },
+  tomorrow: { label: "Reference tomorrow", spec: headingField("Reference tomorrow") }
+};
+function isJournalField(v) {
+  return Object.prototype.hasOwnProperty.call(JOURNAL_FIELDS, v);
+}
+
+// src/weekreview.ts
+function friendlyWeekReviewConfig(plugin) {
+  return {
+    title: "Week in review",
+    compilingText: "Looking back over your week\u2026",
+    compile: () => compile(plugin)
+  };
+}
+async function compile(plugin) {
+  var _a;
+  const s = plugin.settings;
+  const days = [];
+  for (let i = 6; i >= 0; i--) days.push((0, import_obsidian35.moment)().subtract(i, "days").format("YYYY-MM-DD"));
+  const perDay = [];
+  let totalCompleted = 0;
+  let journalDays = 0;
+  let mealsDays = 0;
+  let contactLines = 0;
+  const contacts = /* @__PURE__ */ new Set();
+  const crm = plugin.bridge.crmAvailable() ? plugin.bridge.crmLogTarget() : null;
+  for (const date of days) {
+    const raw = await readDailyNoteRaw(plugin.app, date);
+    const completed = countBullets(readField(raw, headingField(s.completedTasksHeading)));
+    totalCompleted += completed;
+    perDay.push({ date, completed });
+    if (Object.values(JOURNAL_FIELDS).some((f) => readField(raw, f.spec).trim().length > 0)) journalDays++;
+    if (readHeadingSection(raw, "Meals").trim().length > 0) mealsDays++;
+    if (crm) {
+      const lines = readMarkerLogLines(raw, crm.marker, crm.heading);
+      contactLines += lines.length;
+      for (const line of lines) {
+        const m = line.match(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/);
+        if (m) contacts.add(((_a = m[2]) != null ? _a : m[1]).trim());
+      }
+    }
+  }
+  const blocks = [
+    {
+      head: "To-dos finished",
+      figure: String(totalCompleted),
+      bars: perDay.map((d) => ({ label: (0, import_obsidian35.moment)(d.date, "YYYY-MM-DD").format("dd")[0], count: d.completed }))
+    },
+    { head: "Journal", line: `You wrote on ${journalDays} of 7 ${plural(journalDays, "day", "days")}.` }
+  ];
+  if (plugin.bridge.recipesAvailable()) {
+    blocks.push({ head: "Meals planned", line: `${mealsDays} of 7 ${plural(mealsDays, "day", "days")}.` });
+  }
+  if (crm) {
+    const names = [...contacts].sort((a, b) => a.localeCompare(b));
+    blocks.push({
+      head: "Caught up with",
+      line: `${contactLines} ${plural(contactLines, "catch-up", "catch-ups")} \xB7 ${names.length} ${plural(names.length, "person", "people")}.`,
+      chips: names.length > 0 ? names : void 0
+    });
+  }
+  return { header: "Your last seven days, at a glance.", blocks };
+}
+function countBullets(body) {
+  return body.split("\n").filter((l) => /^\s*-\s+\S/.test(l)).length;
+}
+function plural(n, one, many) {
+  return n === 1 ? one : many;
+}
+
 // src/copy.ts
+var COMMAND_OFFLINE = "This button needs its plugin. Enable the matching plugin to turn it on.";
 var FRIENDLY_CATEGORY_COPY = {
   newNoteTitle: "New note",
   titleLabel: "Title",
@@ -3638,11 +5465,7 @@ var FRIENDLY_JOURNAL_COPY = {
   title: "Journal",
   carryHeading: "Reference tomorrow",
   carryLabel: "From yesterday \u2014 to reference today",
-  fields: [
-    { label: "Brain dump", spec: headingField("Brain dump"), placeholder: "Write in \u201CBrain dump\u201D\u2026" },
-    { label: "Journal", spec: headingField("Journal"), placeholder: "Write in \u201CJournal\u201D\u2026" },
-    { label: "Reference tomorrow", spec: headingField("Reference tomorrow"), placeholder: "Write in \u201CReference tomorrow\u201D\u2026" }
-  ]
+  fields: Object.values(JOURNAL_FIELDS).map((f) => ({ label: f.label, spec: f.spec, placeholder: `Write in \u201C${f.label}\u201D\u2026` }))
 };
 var FRIENDLY_MEALS_COPY = {
   title: "Meals",
@@ -3654,7 +5477,7 @@ var FRIENDLY_MEALS_COPY = {
   noGroceryAt: "No grocery list yet. Use \u201CBuild grocery list\u201D below to make one.",
   groceryEmpty: "Your grocery list is empty.",
   remaining: "{remaining} of {total} still to get",
-  commandOffline: "This button needs its plugin. Enable the matching plugin to turn it on.",
+  commandOffline: COMMAND_OFFLINE,
   commands: [
     { id: "recipe-manager:meal-plan", label: "Plan a meal", cls: "dash-btn-primary" },
     { id: "recipe-manager:grocery-list", label: "Build grocery list" },
@@ -3666,7 +5489,7 @@ var FRIENDLY_MEALS_COPY = {
 var FRIENDLY_PLACES_COPY = {
   title: "Places",
   empty: "No places yet. Add shortcuts to your favourite notes and folders in the plugin settings.",
-  commandOffline: "This button needs its plugin. Enable the matching plugin to turn it on."
+  commandOffline: COMMAND_OFFLINE
 };
 var FRIENDLY_SECOND_BRAIN_COPY = {
   title: "Second Brain",
@@ -3694,39 +5517,608 @@ var FRIENDLY_SECOND_BRAIN_COPY = {
   noteNeedsTitle: "Please give the project a name."
 };
 
+// src/panels/actions.ts
+var GROUPS = [
+  {
+    pluginId: "recipe-manager",
+    title: "Recipes",
+    commands: [
+      ["recipe-manager:meal-plan", "Plan a meal"],
+      ["recipe-manager:grocery-list", "Build grocery list"],
+      ["recipe-manager:new-recipe", "New recipe"],
+      ["recipe-manager:open-recipe", "Open a recipe"],
+      ["recipe-manager:recipe-index", "All recipes"]
+    ]
+  },
+  {
+    pluginId: "simple-contact-manager",
+    title: "Contacts",
+    commands: [
+      ["simple-contact-manager:log-interaction", "Log a catch-up"],
+      ["simple-contact-manager:new-contact", "New contact"],
+      ["simple-contact-manager:open-dashboard", "All contacts"]
+    ]
+  },
+  {
+    pluginId: "arfid-tracker",
+    title: "Food log",
+    commands: [
+      ["arfid-tracker:quick-log", "Log a food"],
+      ["arfid-tracker:add-food", "Add a food"],
+      ["arfid-tracker:open-dashboard", "Food dashboard"]
+    ]
+  }
+];
+var ActionsPanel = class extends BasePanel2 {
+  constructor() {
+    super(...arguments);
+    this.id = "actions";
+    this.title = "Quick Actions";
+  }
+  renderBody() {
+    const { app, plugin, bridge } = this.ctx;
+    const refresh = () => this.ctx.requestRefresh("vault");
+    placard2(this.el, "Quick Actions");
+    const mine = this.el.createDiv({ cls: "dash-btn-row" });
+    this.button(mine, "+ To-do", "dash-btn-primary", () => new TodoEditModal2(app, this.ctx.todos, void 0, refresh).open());
+    this.button(mine, "+ Event", "", () => new LocalEventModal(app, friendlyLocalEvents(plugin), void 0, refresh).open());
+    this.button(mine, "+ Shopping", "", () => new ShoppingItemModal(app, plugin, "Groceries", null, refresh).open());
+    this.button(
+      mine,
+      "Week's goals",
+      "",
+      () => new WeeklyGoalsModal(app, friendlyWeeklyGoals(plugin), this.ctx.todos, currentWeekKey(), refresh, FRIENDLY_WEEKLYGOALS_COPY).open()
+    );
+    this.button(mine, "Week in review", "", () => new WeekReviewModal(app, friendlyWeekReviewConfig(plugin)).open());
+    for (const group of GROUPS) {
+      if (!bridge.isPluginEnabled(group.pluginId)) continue;
+      const block = this.el.createDiv({ cls: "dash-actions-group" });
+      block.createDiv({ cls: "dash-subhead", text: group.title });
+      const row = block.createDiv({ cls: "dash-btn-row" });
+      for (const [id, label] of group.commands) commandButton(row, app, id, label, { cls: "dash-btn-sm", offlineText: COMMAND_OFFLINE });
+    }
+  }
+  button(parent, text, cls, onClick) {
+    parent.createEl("button", { cls: `dash-btn dash-btn-sm ${cls}`.trim(), text }).addEventListener("click", onClick);
+  }
+};
+
+// src/panels/contacts.ts
+var import_obsidian36 = require("obsidian");
+var ContactsPanel = class extends BasePanel2 {
+  constructor() {
+    super(...arguments);
+    this.id = "contacts";
+    this.title = "Contacts";
+    this.reconciled = false;
+  }
+  async setup() {
+    if (this.reconciled || !this.ctx.bridge.crmAvailable()) return;
+    this.reconciled = true;
+    await this.reconcile();
+  }
+  renderBody() {
+    const { bridge, app } = this.ctx;
+    placard2(this.el, "Contacts");
+    if (!bridge.crmAvailable()) {
+      this.el.createDiv({
+        cls: "dash-empty",
+        text: "This panel works with the Simple Contact Manager plugin. Once it's installed and turned on, the people you're due to catch up with show up here. You can also hide this panel in the plugin settings."
+      });
+      return;
+    }
+    const contacts = bridge.crmContacts();
+    const due = contacts.filter((c) => c.overdue || c.dueToday);
+    const actions = this.el.createDiv({ cls: "dash-btn-row" });
+    commandButton(actions, app, "simple-contact-manager:log-interaction", "Log a catch-up", { cls: "dash-btn-primary", offlineText: COMMAND_OFFLINE });
+    const find = actions.createEl("button", { cls: "dash-btn", text: "Find someone" });
+    find.addEventListener("click", () => new ContactSearchModal(app, contacts).open());
+    commandButton(actions, app, "simple-contact-manager:new-contact", "New contact", { offlineText: COMMAND_OFFLINE });
+    const list = this.el.createDiv({ cls: "dash-crm-list" });
+    if (due.length === 0) {
+      list.createDiv({ cls: "dash-empty", text: "No one is due for a catch-up today." });
+      return;
+    }
+    for (const c of due) this.renderRow(list, c);
+  }
+  renderRow(parent, c) {
+    const row = parent.createDiv({ cls: "dash-crm-row" });
+    if (c.overdue) row.addClass("is-overdue");
+    const main = row.createDiv({ cls: "dash-crm-main" });
+    const name = main.createEl("a", { cls: "dash-crm-name", text: c.name });
+    name.addEventListener("click", (e) => {
+      e.preventDefault();
+      const file = this.ctx.app.vault.getAbstractFileByPath(c.path);
+      if (file instanceof import_obsidian36.TFile) void this.ctx.app.workspace.getLeaf(false).openFile(file);
+    });
+    const meta = main.createDiv({ cls: "dash-crm-meta" });
+    if (c.priority) meta.createSpan({ cls: "dash-chip", text: c.priority });
+    meta.createSpan({ cls: c.overdue ? "dash-chip dash-chip-warn" : "dash-chip", text: c.overdue ? "overdue" : "due today" });
+    if (c.daysSince !== null) meta.createSpan({ cls: "dash-chip dash-chip-cold", text: `${c.daysSince} days since` });
+    const log = row.createEl("button", { cls: "dash-btn dash-btn-sm", text: "Log" });
+    log.addEventListener("click", () => {
+      if (this.ctx.bridge.crmLogViaApi(c.path)) return;
+      new InteractionModal(this.ctx.app, c.name, async (text) => {
+        const ok = await this.ctx.bridge.crmWriteInteraction(c.path, text);
+        new import_obsidian36.Notice(ok ? `Logged a catch-up with ${c.name}.` : "That couldn't be logged.");
+        if (ok) this.ctx.requestRefresh("manual");
+      }).open();
+    });
+  }
+  /** Backfill any of today's interactions (logged in a contact note) that aren't
+   * in today's daily note yet. Best-effort. */
+  async reconcile() {
+    try {
+      const tails = await this.ctx.bridge.crmReconcileLines();
+      if (tails.length === 0) return;
+      const { marker, heading } = this.ctx.bridge.crmLogTarget();
+      const time = (0, import_obsidian36.moment)().format("HH:mm");
+      for (const tail of tails) await appendDailyLogLine(this.ctx.app, `- ${time} ${tail}`, { marker, heading, time });
+    } catch (e) {
+      console.error("Daily Dashboard: contacts reconcile failed", e);
+    }
+  }
+};
+var ContactSearchModal = class extends import_obsidian36.FuzzySuggestModal {
+  constructor(app, contacts) {
+    super(app);
+    this.contacts = contacts;
+    this.setPlaceholder("Search contacts\u2026");
+  }
+  getItems() {
+    return [...this.contacts].sort((a, b) => a.name.localeCompare(b.name));
+  }
+  getItemText(c) {
+    return c.name;
+  }
+  onChooseItem(c) {
+    const file = this.app.vault.getAbstractFileByPath(c.path);
+    if (file instanceof import_obsidian36.TFile) void this.app.workspace.getLeaf(false).openFile(file);
+    else new import_obsidian36.Notice("That contact's note couldn't be found.");
+  }
+};
+var InteractionModal = class extends import_obsidian36.Modal {
+  constructor(app, contactName, onSubmit) {
+    super(app);
+    this.contactName = contactName;
+    this.onSubmit = onSubmit;
+    this.note = "";
+  }
+  onOpen() {
+    this.titleEl.setText(`Catch-up with ${this.contactName}`);
+    new import_obsidian36.Setting(this.contentEl).setName("What did you talk about?").addText((t) => {
+      t.setPlaceholder("e.g. Called about the weekend").onChange((v) => this.note = v);
+      t.inputEl.classList.add("dash-modal-wide");
+      t.inputEl.focus();
+      t.inputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          this.submit();
+        }
+      });
+    });
+    new import_obsidian36.Setting(this.contentEl).addButton((b) => b.setButtonText("Cancel").onClick(() => this.close())).addButton((b) => b.setButtonText("Log it").setCta().onClick(() => this.submit()));
+  }
+  submit() {
+    const note = this.note.trim();
+    if (!note) {
+      new import_obsidian36.Notice("Add a few words about the catch-up first.");
+      return;
+    }
+    this.onSubmit(note);
+    this.close();
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+
+// src/panels/brief.ts
+var import_obsidian39 = require("obsidian");
+
+// src/ai/brief.ts
+var import_obsidian38 = require("obsidian");
+
+// src/ai/client.ts
+var import_obsidian37 = require("obsidian");
+var ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+var ANTHROPIC_VERSION = "2023-06-01";
+async function aiComplete(cfg, system, user, maxTokens = 4e3) {
+  if (!cfg.apiKey.trim()) return { ok: false, text: "", error: "No API key set \u2014 add one in Settings \u2192 Daily Dashboard." };
+  try {
+    return cfg.provider === "anthropic" ? await anthropic(cfg, system, user, maxTokens) : await openai(cfg, system, user, maxTokens);
+  } catch (e) {
+    return { ok: false, text: "", error: describeError(e) };
+  }
+}
+var FALLBACK_MODELS = /* @__PURE__ */ new Set(["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"]);
+async function anthropic(cfg, system, user, maxTokens) {
+  var _a, _b;
+  const model = cfg.model.trim() || "claude-opus-5-5";
+  const fallback = FALLBACK_MODELS.has(model);
+  const headers = {
+    "content-type": "application/json",
+    "x-api-key": cfg.apiKey.trim(),
+    "anthropic-version": ANTHROPIC_VERSION,
+    // Permit the request from Obsidian's webview origin.
+    "anthropic-dangerous-direct-browser-access": "true"
+  };
+  if (fallback) headers["anthropic-beta"] = "server-side-fallback-2026-07-01";
+  const res = await (0, import_obsidian37.requestUrl)({
+    url: ANTHROPIC_URL,
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      // A short daily summary doesn't need deep reasoning; keep it quick and cheap.
+      output_config: { effort: "low" },
+      ...fallback ? { fallbacks: "default" } : {},
+      system,
+      messages: [{ role: "user", content: user }]
+    }),
+    throw: false
+  });
+  if (res.status >= 400) return { ok: false, text: "", error: apiError(res.status, res.json) };
+  if (((_a = res.json) == null ? void 0 : _a.stop_reason) === "refusal") return { ok: false, text: "", error: "The model declined to write this one. Try again later." };
+  const parts = (_b = res.json) == null ? void 0 : _b.content;
+  const text = Array.isArray(parts) ? parts.filter((p) => (p == null ? void 0 : p.type) === "text").map((p) => {
+    var _a2;
+    return (_a2 = p.text) != null ? _a2 : "";
+  }).join("").trim() : "";
+  if (!text) return { ok: false, text: "", error: "The model returned an empty response." };
+  return { ok: true, text };
+}
+async function openai(cfg, system, user, maxTokens) {
+  var _a, _b, _c, _d, _e;
+  const base = (cfg.baseUrl || "https://api.openai.com/v1").replace(/\/+$/, "");
+  const res = await (0, import_obsidian37.requestUrl)({
+    url: `${base}/chat/completions`,
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${cfg.apiKey.trim()}`
+    },
+    body: JSON.stringify({
+      model: cfg.model || "gpt-4o-mini",
+      max_tokens: maxTokens,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user }
+      ]
+    }),
+    throw: false
+  });
+  if (res.status >= 400) return { ok: false, text: "", error: apiError(res.status, res.json) };
+  const text = String((_e = (_d = (_c = (_b = (_a = res.json) == null ? void 0 : _a.choices) == null ? void 0 : _b[0]) == null ? void 0 : _c.message) == null ? void 0 : _d.content) != null ? _e : "").trim();
+  if (!text) return { ok: false, text: "", error: "The model returned an empty response." };
+  return { ok: true, text };
+}
+function apiError(status, json) {
+  var _a, _b, _c;
+  const msg = (_c = (_b = (_a = json == null ? void 0 : json.error) == null ? void 0 : _a.message) != null ? _b : json == null ? void 0 : json.message) != null ? _c : "";
+  const base = `AI request failed (${status})`;
+  if (status === 401 || status === 403) return `${base}: check your API key.`;
+  if (status === 429) return `${base}: rate limited or out of credit.`;
+  return msg ? `${base}: ${msg}` : base;
+}
+function describeError(e) {
+  const m = e instanceof Error ? e.message : String(e);
+  if (/net::|network|Failed to fetch|ENOTFOUND|ETIMEDOUT/i.test(m)) return "Couldn't reach the AI service \u2014 check your connection.";
+  return `AI request error: ${m}`;
+}
+
+// src/ai/brief.ts
+function today() {
+  return (0, import_obsidian38.moment)().format("YYYY-MM-DD");
+}
+function aiConfig(plugin) {
+  const s = plugin.settings;
+  return { provider: s.aiProvider, apiKey: s.aiApiKey, baseUrl: s.aiBaseUrl, model: s.aiModel };
+}
+function briefConfigured(plugin) {
+  return plugin.settings.aiDailyBriefEnabled && !!plugin.settings.aiApiKey.trim();
+}
+async function scheduleLines(plugin, date) {
+  const lines = [];
+  const items = [];
+  for (const cal of plugin.settings.agendaUrls) {
+    const cache = plugin.agendaCache[cal.url];
+    if (!(cache == null ? void 0 : cache.text)) continue;
+    try {
+      items.push(...eventsOnDate(parseICS(cache.text), date));
+    } catch (e) {
+    }
+  }
+  for (const ev of plugin.localEvents.filter((e) => e.date === date)) items.push(localEventToAgendaItem(ev));
+  items.sort((a, b) => a.sortKey - b.sortKey);
+  for (const it of items) {
+    const when = it.allDay ? "all-day" : it.timeLabel || (0, import_obsidian38.moment)(it.startMs).format("HH:mm");
+    lines.push(`- ${when}: ${it.summary}${it.location ? ` @ ${it.location}` : ""}`);
+  }
+  for (const i of plugin.todos.instancesFor(date).filter((i2) => i2.item.scheduledTime && !i2.done && !i2.skipped)) {
+    lines.push(`- ${i.item.scheduledTime}: ${i.item.text}`);
+  }
+  if (plugin.bridge.recipesAvailable()) {
+    try {
+      for (const m of await plugin.bridge.plannedMeals(date)) lines.push(`- Meal: ${m.name}`);
+    } catch (e) {
+    }
+  }
+  return lines;
+}
+async function collectContext(plugin, date) {
+  const s = plugin.settings;
+  const sections = [];
+  if (s.aiBriefIncludeSchedule) {
+    const lines = await scheduleLines(plugin, date);
+    sections.push(`SCHEDULE \u2014 things happening at set times (not to-dos):
+${lines.length ? lines.join("\n") : "- nothing scheduled"}`);
+  }
+  if (s.aiBriefIncludeTasks) {
+    const pending = plugin.todos.instancesFor(date).filter((i) => !i.done && !i.skipped);
+    const lines = pending.map((i) => `- ${i.item.text}${i.flagged && i.flagLabel ? ` (${i.flagLabel})` : ""}`);
+    sections.push(`TO-DO LIST:
+${lines.length ? lines.join("\n") : "- nothing pending"}`);
+  }
+  if (s.aiBriefIncludePeople && plugin.bridge.crmAvailable()) {
+    const self = s.aiUserName.trim().toLowerCase();
+    const due = plugin.bridge.crmContacts().filter((c) => (c.overdue || c.dueToday) && c.name.trim().toLowerCase() !== self).map((c) => `- ${c.name}${c.overdue ? " (overdue)" : " (due today)"}`);
+    sections.push(`PEOPLE TO CATCH UP WITH (other people, never the reader):
+${due.length ? due.join("\n") : "- no one due"}`);
+  }
+  return sections.join("\n\n");
+}
+async function journalText(plugin) {
+  const parts = [];
+  for (const f of Object.values(JOURNAL_FIELDS)) {
+    try {
+      const body = (await readDailyField(plugin.app, f.spec)).trim();
+      if (body) parts.push(body);
+    } catch (e) {
+    }
+  }
+  return parts.join("\n").trim();
+}
+var GROUND_RULES = "Use only the facts in the data below. Never invent dates, durations, counts, streaks or history that the data doesn't state. When unsure, say less.";
+function persona(plugin) {
+  const s = plugin.settings;
+  const name = s.aiUserName.trim();
+  const pron = s.aiUserPronouns.trim();
+  const about = s.aiAboutMe.trim();
+  const who = name ? `You are writing for ${name}${pron ? ` (${pron})` : ""}, who is reading this. Address them as "you". If "${name}" appears in the data, that's the reader, not a contact.` : `Write to the reader directly as "you".`;
+  return about ? `${who} What they've shared about themselves (use only what it says): ${about}` : who;
+}
+function briefSystem(plugin) {
+  return [
+    persona(plugin),
+    GROUND_RULES,
+    "Write a short, friendly morning brief (about 120 words) for their notes app.",
+    "Open with one line about the shape of the day, then short sections for the schedule, who to catch up with, and what to get done. Skip empty sections.",
+    "Present schedule items as a schedule, never as checkboxes; only the to-do list is a to-do list.",
+    "Tone: warm, calm and practical \u2014 no hype. No preamble or sign-off. Plain Markdown."
+  ].join(" ");
+}
+function eodSystem(plugin) {
+  return [
+    persona(plugin),
+    GROUND_RULES,
+    "Write a short, balanced end-of-day recap (about 100 words) to add to their journal.",
+    "Assume scheduled events happened unless the journal says otherwise. Mention what got done, what's still open on the to-do list, and one kind, practical note for tomorrow.",
+    "Tone: warm and genuine, not over-the-top. Plain Markdown, no heading."
+  ].join(" ");
+}
+var inFlight = null;
+async function generateMorningBrief(plugin, force = false) {
+  if (!briefConfigured(plugin)) {
+    if (force) new import_obsidian38.Notice("Turn on the daily brief and add an API key in Settings \u2192 Daily Dashboard first.");
+    return null;
+  }
+  const date = today();
+  if (!force && plugin.getBriefDate() === date && plugin.getBriefText()) return plugin.getBriefText();
+  if (inFlight) return inFlight;
+  inFlight = (async () => {
+    var _a;
+    const context = await collectContext(plugin, date);
+    const nice = (0, import_obsidian38.moment)(date, "YYYY-MM-DD").format("dddd, MMMM D");
+    const res = await aiComplete(aiConfig(plugin), briefSystem(plugin), `Today is ${nice}.
+
+${context}`);
+    if (!res.ok) {
+      new import_obsidian38.Notice((_a = res.error) != null ? _a : "Couldn't write the brief.");
+      return null;
+    }
+    await plugin.setBrief(date, res.text);
+    return res.text;
+  })();
+  try {
+    return await inFlight;
+  } finally {
+    inFlight = null;
+  }
+}
+async function generateEndOfDay(plugin) {
+  var _a;
+  if (!plugin.settings.aiApiKey.trim()) {
+    new import_obsidian38.Notice("Add an API key in Settings \u2192 Daily Dashboard first.");
+    return null;
+  }
+  const date = today();
+  const instances = plugin.todos.instancesFor(date);
+  const parts = [];
+  if (plugin.settings.aiBriefIncludeSchedule) {
+    const sched = await scheduleLines(plugin, date);
+    if (sched.length) parts.push(`ON TODAY'S SCHEDULE:
+${sched.join("\n")}`);
+  }
+  if (plugin.settings.aiBriefIncludeTasks) {
+    const done = instances.filter((i) => i.done).map((i) => `- ${i.item.text}`);
+    const open = instances.filter((i) => !i.done && !i.skipped).map((i) => `- ${i.item.text}`);
+    parts.push(`DONE TODAY:
+${done.length ? done.join("\n") : "- (none recorded)"}`);
+    parts.push(`STILL OPEN:
+${open.length ? open.join("\n") : "- (none)"}`);
+  }
+  const journal = await journalText(plugin);
+  if (journal) parts.push(`TODAY'S JOURNAL (their own words \u2014 the source of truth):
+${journal}`);
+  const nice = (0, import_obsidian38.moment)(date, "YYYY-MM-DD").format("dddd, MMMM D");
+  const res = await aiComplete(aiConfig(plugin), eodSystem(plugin), `End of ${nice}.
+
+${parts.join("\n\n")}`);
+  if (!res.ok) {
+    new import_obsidian38.Notice((_a = res.error) != null ? _a : "Couldn't write the recap.");
+    return null;
+  }
+  const heading = plugin.settings.aiEndOfDayHeading.trim() || "End of day";
+  const file = await ensureDailyNote(plugin.app);
+  await plugin.app.vault.process(file, (content) => {
+    const spec = headingField(heading);
+    if (spec.anchor.test(content)) return replaceField(content, spec, res.text);
+    return `${content.replace(/\s+$/, "")}
+
+## ${heading}
+
+${res.text.trim()}
+`;
+  });
+  new import_obsidian38.Notice("Added an end-of-day recap to today's note.");
+  return res.text;
+}
+
+// src/panels/brief.ts
+var BriefPanel = class extends BasePanel2 {
+  constructor() {
+    super(...arguments);
+    this.id = "brief";
+    this.title = "Daily Brief";
+  }
+  async renderBody() {
+    const plugin = this.ctx.plugin;
+    const head = placard2(this.el, "Daily Brief");
+    const tools = head.createDiv({ cls: "dash-qotd-tools" });
+    if (!briefConfigured(plugin)) {
+      this.el.createDiv({
+        cls: "dash-muted",
+        text: plugin.settings.aiApiKey.trim() ? "The daily brief is off. Turn it on in Settings \u2192 Daily Dashboard \u2192 Daily brief." : "This optional panel writes a short summary of your day using an AI service. To use it, add an API key in Settings \u2192 Daily Dashboard \u2192 Daily brief \u2014 or hide this panel."
+      });
+      return;
+    }
+    const refresh = tools.createEl("button", { cls: "dash-qotd-add", text: "\u21BB", attr: { "aria-label": "Regenerate the brief" } });
+    refresh.addEventListener("click", () => void this.run(true));
+    const body = this.el.createDiv({ cls: "dash-brief" });
+    const cached = plugin.getBriefDate() === todayISO() ? plugin.getBriefText() : "";
+    if (cached) {
+      await this.renderMarkdown(body, cached);
+    } else {
+      body.createDiv({ cls: "dash-muted", text: "Writing today's brief\u2026" });
+      void this.run(false, body);
+    }
+    const foot = this.el.createDiv({ cls: "dash-brief-foot" });
+    const endBtn = foot.createEl("button", { cls: "dash-btn dash-btn-sm dash-brief-endday", text: "End the day" });
+    endBtn.addEventListener("click", async () => {
+      endBtn.disabled = true;
+      endBtn.setText("Writing\u2026");
+      await generateEndOfDay(plugin);
+      endBtn.disabled = false;
+      endBtn.setText("End the day");
+    });
+  }
+  /** Generate (or regenerate) and re-render the panel. */
+  async run(force, body) {
+    const target = body != null ? body : this.el.querySelector(".dash-brief");
+    if (target && force) {
+      target.empty();
+      target.createDiv({ cls: "dash-muted", text: "Regenerating\u2026" });
+    }
+    const text = await generateMorningBrief(this.ctx.plugin, force);
+    if (text && target) {
+      target.empty();
+      await this.renderMarkdown(target, text);
+    } else if (!text && target) {
+      target.empty();
+      target.createDiv({ cls: "dash-muted", text: "The brief couldn't be written. Check the settings and try \u21BB." });
+    }
+  }
+  async renderMarkdown(el, md) {
+    try {
+      await import_obsidian39.MarkdownRenderer.render(this.ctx.app, md, el, "", this.ctx.plugin);
+    } catch (e) {
+      el.createDiv({ text: md });
+    }
+  }
+};
+function todayISO() {
+  const d = /* @__PURE__ */ new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 // src/panels/registry.ts
 var PANEL_ORDER = [
+  "brief",
   "clock",
   "verse",
   "todo",
   "agenda",
   "journal",
   "meals",
+  "shopping",
+  "actions",
+  "contacts",
+  "quote",
   "search",
   "calendar",
   "secondbrain",
   "places"
 ];
 var PANEL_TITLES = {
+  brief: "Daily Brief",
   clock: "Clock",
   verse: "Verse of the Day",
   todo: "To-do",
   agenda: "Today's Agenda",
   journal: "Journal",
   meals: "Meals",
+  shopping: "Shopping",
+  actions: "Quick Actions",
+  contacts: "Contacts",
+  quote: "Quote of the Day",
   search: "Search",
   calendar: "Calendar",
   secondbrain: "Second Brain",
   places: "Places"
 };
+var PANEL_DESCRIPTIONS = {
+  brief: "An AI-written summary of your day. Optional \u2014 needs your own API key (see \u201CDaily brief\u201D below).",
+  clock: "The time and date.",
+  verse: "One verse of Proverbs a day (KJV).",
+  todo: "Your persistent to-do list, with a weekly review.",
+  agenda: "Today's calendar events, a \u201Cwhat's next\u201D countdown, weekly goals and a printable week.",
+  journal: "Writes into today's daily note.",
+  meals: "Planned meals and groceries. Needs the Recipe Manager plugin.",
+  shopping: "Shopping lists grouped by aisle, store and who's paying. Imports Recipe Manager grocery lists.",
+  actions: "One-tap buttons for the dashboard and any companion plugins you have installed.",
+  contacts: "Who's due for a catch-up. Needs the Simple Contact Manager plugin.",
+  quote: "A quote a day from your own collection of things people have said.",
+  search: "Search your notes; make notes and categories.",
+  calendar: "A month grid of your daily notes, plus a search inside them.",
+  secondbrain: "Your active projects.",
+  places: "Shortcut buttons to favourite notes and commands."
+};
+var DEFAULT_OFF = /* @__PURE__ */ new Set(["brief", "contacts", "quote"]);
 function createPanels(order, enabled, plugin) {
   const factories = {
+    brief: () => new BriefPanel(),
     clock: () => new ClockPanel(),
     verse: () => new VersePanel(),
-    todo: () => new TodoPanel(),
+    todo: () => new TodoPanel(() => new WeekReviewModal(plugin.app, friendlyWeekReviewConfig(plugin)).open()),
     agenda: () => new AgendaPanel(),
     journal: () => new JournalPanel(FRIENDLY_JOURNAL_COPY),
     meals: () => new MealsPanel(FRIENDLY_MEALS_COPY),
+    shopping: () => new ShoppingPanel(),
+    actions: () => new ActionsPanel(),
+    contacts: () => new ContactsPanel(),
+    quote: () => new QuotePanel(),
     search: () => new SearchPanel(plugin.knowledgeBase, FRIENDLY_SEARCH_COPY, FRIENDLY_CATEGORY_COPY),
     calendar: () => new CalendarPanel(),
     secondbrain: () => new SecondBrainPanel(plugin.secondBrain, FRIENDLY_SECOND_BRAIN_COPY),
@@ -3750,7 +6142,14 @@ var DEFAULT_SETTINGS = {
   openOnStartup: false,
   replaceNewTab: false,
   panelOrder: [...PANEL_ORDER],
-  enabledPanels: Object.fromEntries(PANEL_ORDER.map((id) => [id, true])),
+  enabledPanels: Object.fromEntries(PANEL_ORDER.map((id) => [id, !DEFAULT_OFF.has(id)])),
+  panelColumns: {},
+  panelSpans: {},
+  mobileTabs: true,
+  tabs: [],
+  tabAssignments: {},
+  defaultTabId: null,
+  layoutPath: "Daily Dashboard/Dashboard Layout.md",
   clock24h: false,
   agendaRefreshMinutes: 30,
   agendaHeight: 320,
@@ -3773,7 +6172,22 @@ var DEFAULT_SETTINGS = {
   directivesPath: "Daily Dashboard/To-dos.md",
   localEventsPath: "Daily Dashboard/Local Events.md",
   completedTasksMarker: "",
-  completedTasksHeading: "Completed tasks"
+  completedTasksHeading: "Completed tasks",
+  shoppingPath: "Daily Dashboard/Shopping.md",
+  quotesPath: "Daily Dashboard/Quotes.md",
+  aiProvider: "anthropic",
+  aiApiKey: "",
+  aiBaseUrl: "https://api.openai.com/v1",
+  aiCredentialsPath: "Daily Dashboard/AI Credentials.md",
+  aiModel: "claude-opus-5-5",
+  aiDailyBriefEnabled: false,
+  aiUserName: "",
+  aiUserPronouns: "",
+  aiAboutMe: "",
+  aiBriefIncludeSchedule: true,
+  aiBriefIncludeTasks: true,
+  aiBriefIncludePeople: true,
+  aiEndOfDayHeading: "End of day"
 };
 function normalizePlace(p) {
   if (p.type === "note" && p.target.startsWith("cmd:")) {
@@ -3782,19 +6196,74 @@ function normalizePlace(p) {
   return { ...p };
 }
 function mergeSettings(loaded) {
-  var _a, _b, _c, _d, _e;
+  var _a, _b, _c, _d, _e, _f, _g;
   const s = { ...DEFAULT_SETTINGS, ...loaded != null ? loaded : {} };
   if (!isThemeId(s.theme)) s.theme = DEFAULT_THEME;
   const order = ((_a = loaded == null ? void 0 : loaded.panelOrder) != null ? _a : []).filter((id) => PANEL_ORDER.includes(id));
   for (const id of PANEL_ORDER) if (!order.includes(id)) order.push(id);
   s.panelOrder = order;
   s.enabledPanels = { ...DEFAULT_SETTINGS.enabledPanels, ...(_b = loaded == null ? void 0 : loaded.enabledPanels) != null ? _b : {} };
+  s.panelColumns = pickKnown(loaded == null ? void 0 : loaded.panelColumns);
+  s.panelSpans = pickKnown(loaded == null ? void 0 : loaded.panelSpans);
   s.agendaUrls = ((_c = loaded == null ? void 0 : loaded.agendaUrls) != null ? _c : DEFAULT_SETTINGS.agendaUrls).map((c) => ({ ...c }));
   s.kbSearchPaths = ((_d = loaded == null ? void 0 : loaded.kbSearchPaths) != null ? _d : DEFAULT_SETTINGS.kbSearchPaths).slice();
   s.places = ((_e = loaded == null ? void 0 : loaded.places) != null ? _e : DEFAULT_SETTINGS.places).map(normalizePlace);
+  s.tabs = [];
+  s.tabAssignments = {};
+  s.defaultTabId = null;
+  applyTabs(s, (_f = loaded == null ? void 0 : loaded.tabs) != null ? _f : [], (_g = loaded == null ? void 0 : loaded.tabAssignments) != null ? _g : {}, loaded == null ? void 0 : loaded.defaultTabId);
   return s;
 }
-var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
+function pickKnown(map) {
+  const out = {};
+  for (const id of PANEL_ORDER) {
+    const v = map == null ? void 0 : map[id];
+    if (typeof v === "number" && Number.isFinite(v)) out[id] = v;
+  }
+  return out;
+}
+function applyTabs(s, tabs, assignments, defaultTabId) {
+  var _a, _b;
+  s.tabs = tabs.filter((t) => t && typeof t.id === "string" && typeof t.name === "string").map((t) => ({ id: t.id, name: t.name }));
+  const tabIds = new Set(s.tabs.map((t) => t.id));
+  s.tabAssignments = {};
+  for (const [pid, tid] of Object.entries(assignments)) {
+    if (PANEL_ORDER.includes(pid) && tabIds.has(tid)) s.tabAssignments[pid] = tid;
+  }
+  s.defaultTabId = defaultTabId && tabIds.has(defaultTabId) ? defaultTabId : (_b = (_a = s.tabs[0]) == null ? void 0 : _a.id) != null ? _b : null;
+}
+function layoutFromSettings(s) {
+  return {
+    mobileTabs: s.mobileTabs,
+    tabs: s.tabs.map((t) => ({ id: t.id, name: t.name })),
+    tabAssignments: { ...s.tabAssignments },
+    defaultTabId: s.defaultTabId,
+    panelOrder: [...s.panelOrder],
+    enabledPanels: { ...s.enabledPanels },
+    panelColumns: { ...s.panelColumns },
+    panelSpans: { ...s.panelSpans }
+  };
+}
+function applyLayout(s, layout) {
+  var _a, _b;
+  if (typeof layout.mobileTabs === "boolean") s.mobileTabs = layout.mobileTabs;
+  applyTabs(
+    s,
+    (_a = layout.tabs) != null ? _a : s.tabs,
+    (_b = layout.tabAssignments) != null ? _b : s.tabAssignments,
+    layout.defaultTabId !== void 0 ? layout.defaultTabId : s.defaultTabId
+  );
+  if (layout.panelOrder) {
+    const order = layout.panelOrder.filter((id) => PANEL_ORDER.includes(id));
+    for (const id of PANEL_ORDER) if (!order.includes(id)) order.push(id);
+    s.panelOrder = order;
+  }
+  if (layout.enabledPanels) s.enabledPanels = { ...DEFAULT_SETTINGS.enabledPanels, ...layout.enabledPanels };
+  if (layout.panelColumns) s.panelColumns = pickKnown(layout.panelColumns);
+  if (layout.panelSpans) s.panelSpans = pickKnown(layout.panelSpans);
+  return s;
+}
+var DashSettingTab = class extends import_obsidian40.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -3805,15 +6274,15 @@ var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
   }
   /** Persist and re-mount open views — for panel enable/reorder changes. */
   async saveLayout() {
-    await this.plugin.saveData_();
+    await this.plugin.persistLayout();
     this.plugin.rebuildOpenViews();
   }
   display() {
     const { containerEl } = this;
     const s = this.plugin.settings;
     containerEl.empty();
-    new import_obsidian27.Setting(containerEl).setName("Appearance").setHeading();
-    new import_obsidian27.Setting(containerEl).setName("Theme").setDesc(`${this.themeBlurb(s.theme)} Each theme follows your Obsidian light/dark setting automatically.`).addDropdown((dd) => {
+    new import_obsidian40.Setting(containerEl).setName("Appearance").setHeading();
+    new import_obsidian40.Setting(containerEl).setName("Theme").setDesc(`${this.themeBlurb(s.theme)} Each theme follows your Obsidian light/dark setting automatically.`).addDropdown((dd) => {
       for (const t of THEMES) dd.addOption(t.id, t.label);
       dd.setValue(s.theme).onChange(async (v) => {
         s.theme = isThemeId(v) ? v : DEFAULT_THEME;
@@ -3822,32 +6291,34 @@ var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
         this.display();
       });
     });
-    new import_obsidian27.Setting(containerEl).setName("Open on startup").setDesc("Open the dashboard automatically when Obsidian starts.").addToggle(
+    new import_obsidian40.Setting(containerEl).setName("Open on startup").setDesc("Open the dashboard automatically when Obsidian starts.").addToggle(
       (t) => t.setValue(s.openOnStartup).onChange(async (v) => {
         s.openOnStartup = v;
         await this.save();
       })
     );
-    new import_obsidian27.Setting(containerEl).setName("Use as the New Tab page").setDesc("Turn every empty New Tab into the dashboard, so it becomes your landing view.").addToggle(
+    new import_obsidian40.Setting(containerEl).setName("Use as the New Tab page").setDesc("Turn every empty New Tab into the dashboard, so it becomes your landing view.").addToggle(
       (t) => t.setValue(s.replaceNewTab).onChange(async (v) => {
         s.replaceNewTab = v;
         await this.save();
         if (v) this.plugin.replaceActiveEmptyLeaf();
       })
     );
-    new import_obsidian27.Setting(containerEl).setName("24-hour clock").setDesc("Off shows the time as 2:32 PM. On shows it as 14:32.").addToggle(
+    new import_obsidian40.Setting(containerEl).setName("24-hour clock").setDesc("Off shows the time as 2:32 PM. On shows it as 14:32.").addToggle(
       (t) => t.setValue(s.clock24h).onChange(async (v) => {
         s.clock24h = v;
         await this.save();
       })
     );
-    new import_obsidian27.Setting(containerEl).setName("Panels").setDesc("Turn panels on or off, and reorder them. Everything is on by default; the layout stacks to one column on a phone and spreads to a grid on the desktop.").setHeading();
+    new import_obsidian40.Setting(containerEl).setName("Panels").setDesc(
+      "Every panel is a separate module \u2014 turn on only the ones you want, and reorder them. On the desktop you can also put each panel in a column (1\u20133) and give it a span; leave everything at column 1 for the default packed layout. A phone always stacks panels in this order."
+    ).setHeading();
     const list = containerEl.createDiv({ cls: "dash-settings-panel-list" });
     const renderList = () => {
       list.empty();
       s.panelOrder.forEach((id, index) => {
-        var _a;
-        const row = new import_obsidian27.Setting(list).setName((_a = PANEL_TITLES[id]) != null ? _a : id);
+        var _a, _b;
+        const row = new import_obsidian40.Setting(list).setName((_a = PANEL_TITLES[id]) != null ? _a : id).setDesc((_b = PANEL_DESCRIPTIONS[id]) != null ? _b : "");
         row.addExtraButton(
           (b) => b.setIcon("arrow-up").setTooltip("Move up").setDisabled(index === 0).onClick(async () => {
             [s.panelOrder[index - 1], s.panelOrder[index]] = [s.panelOrder[index], s.panelOrder[index - 1]];
@@ -3862,6 +6333,34 @@ var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
             renderList();
           })
         );
+        row.addDropdown((dd) => {
+          var _a2;
+          dd.addOptions({ "1": "Col 1", "2": "Col 2", "3": "Col 3" });
+          dd.setValue(String((_a2 = s.panelColumns[id]) != null ? _a2 : 1)).onChange(async (v) => {
+            s.panelColumns[id] = Number(v);
+            await this.saveLayout();
+          });
+        });
+        row.addDropdown((dd) => {
+          var _a2;
+          dd.addOptions({ "1": "Span 1", "2": "Span 2", "3": "Span 3" });
+          dd.setValue(String((_a2 = s.panelSpans[id]) != null ? _a2 : 1)).onChange(async (v) => {
+            s.panelSpans[id] = Number(v);
+            await this.saveLayout();
+          });
+        });
+        if (s.tabs.length > 0) {
+          row.addDropdown((dd) => {
+            var _a2;
+            dd.addOption("", "\u25B8 Default tab");
+            for (const tab of s.tabs) dd.addOption(tab.id, tab.name);
+            dd.setValue((_a2 = s.tabAssignments[id]) != null ? _a2 : "").onChange(async (v) => {
+              if (v) s.tabAssignments[id] = v;
+              else delete s.tabAssignments[id];
+              await this.saveLayout();
+            });
+          });
+        }
         row.addToggle(
           (t) => t.setValue(s.enabledPanels[id] !== false).onChange(async (v) => {
             s.enabledPanels[id] = v;
@@ -3871,8 +6370,71 @@ var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
       });
     };
     renderList();
-    new import_obsidian27.Setting(containerEl).setName("Today's agenda").setHeading();
-    new import_obsidian27.Setting(containerEl).setName("Refresh interval (minutes)").setDesc("How often your calendars are re-fetched while the dashboard is open.").addText(
+    new import_obsidian40.Setting(containerEl).setName("Phone tabs").setDesc(
+      "On a phone, group panels into tabs instead of one long scroll (the desktop always shows everything). Add tabs here, star the one that opens first, then pick a tab for each panel in the list above \u2014 panels without a tab go to the starred one."
+    ).setHeading();
+    new import_obsidian40.Setting(containerEl).setName("Use tabs on a phone").setDesc("When on and at least one tab exists, the phone dashboard shows a tab bar.").addToggle(
+      (t) => t.setValue(s.mobileTabs).onChange(async (v) => {
+        s.mobileTabs = v;
+        await this.saveLayout();
+      })
+    );
+    const tabsList = containerEl.createDiv({ cls: "dash-settings-tab-list" });
+    const renderTabs = () => {
+      tabsList.empty();
+      s.tabs.forEach((tab, i) => {
+        const row = new import_obsidian40.Setting(tabsList);
+        row.addText(
+          (txt) => txt.setPlaceholder("Tab name").setValue(tab.name).onChange(async (v) => {
+            tab.name = v;
+            await this.saveLayout();
+          })
+        );
+        row.addExtraButton(
+          (b) => b.setIcon(s.defaultTabId === tab.id ? "star" : "star-off").setTooltip(s.defaultTabId === tab.id ? "Opens first" : "Open this tab first").onClick(async () => {
+            s.defaultTabId = tab.id;
+            await this.saveLayout();
+            renderTabs();
+          })
+        );
+        row.addExtraButton(
+          (b) => b.setIcon("arrow-up").setTooltip("Move up").setDisabled(i === 0).onClick(async () => {
+            [s.tabs[i - 1], s.tabs[i]] = [s.tabs[i], s.tabs[i - 1]];
+            await this.saveLayout();
+            renderTabs();
+          })
+        );
+        row.addExtraButton(
+          (b) => b.setIcon("arrow-down").setTooltip("Move down").setDisabled(i === s.tabs.length - 1).onClick(async () => {
+            [s.tabs[i + 1], s.tabs[i]] = [s.tabs[i], s.tabs[i + 1]];
+            await this.saveLayout();
+            renderTabs();
+          })
+        );
+        row.addExtraButton(
+          (b) => b.setIcon("trash-2").setTooltip("Delete tab").onClick(async () => {
+            var _a, _b;
+            s.tabs.splice(i, 1);
+            for (const k of Object.keys(s.tabAssignments)) if (s.tabAssignments[k] === tab.id) delete s.tabAssignments[k];
+            if (s.defaultTabId === tab.id) s.defaultTabId = (_b = (_a = s.tabs[0]) == null ? void 0 : _a.id) != null ? _b : null;
+            await this.saveLayout();
+            this.display();
+          })
+        );
+      });
+      new import_obsidian40.Setting(tabsList).addButton(
+        (b) => b.setButtonText("+ Add tab").onClick(async () => {
+          const id = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+          s.tabs.push({ id, name: `Tab ${s.tabs.length + 1}` });
+          if (!s.defaultTabId) s.defaultTabId = id;
+          await this.saveLayout();
+          this.display();
+        })
+      );
+    };
+    renderTabs();
+    new import_obsidian40.Setting(containerEl).setName("Today's agenda").setHeading();
+    new import_obsidian40.Setting(containerEl).setName("Refresh interval (minutes)").setDesc("How often your calendars are re-fetched while the dashboard is open.").addText(
       (t) => t.setValue(String(s.agendaRefreshMinutes)).onChange(async (v) => {
         const n = Number(v);
         if (Number.isFinite(n) && n > 0) {
@@ -3881,7 +6443,7 @@ var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
         }
       })
     );
-    new import_obsidian27.Setting(containerEl).setName("Agenda height (pixels)").setDesc("The agenda scrolls inside a fixed height so it never takes over the screen. This sets that height.").addText(
+    new import_obsidian40.Setting(containerEl).setName("Agenda height (pixels)").setDesc("The agenda scrolls inside a fixed height so it never takes over the screen. This sets that height.").addText(
       (t) => t.setValue(String(s.agendaHeight)).onChange(async (v) => {
         const n = Number(v);
         if (Number.isFinite(n) && n >= 120) {
@@ -3890,12 +6452,12 @@ var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
         }
       })
     );
-    new import_obsidian27.Setting(containerEl).setName("Calendar share links").setDesc("Up to 20 public Proton Calendar / ICS share links (.ics). Each has its own label, address, and a remove button. Today only \u2014 there is no month view.");
+    new import_obsidian40.Setting(containerEl).setName("Calendar share links").setDesc("Up to 20 public Proton Calendar / ICS share links (.ics). Each has a label, its address, a colour (the circle-arrow resets it to the theme's), and a switch for whether it counts toward the \u201Cwhat's next\u201D countdown at the top of the agenda.");
     const calList = containerEl.createDiv({ cls: "dash-settings-cal-list" });
     const renderCals = () => {
       calList.empty();
       s.agendaUrls.forEach((cal, i) => {
-        const row = new import_obsidian27.Setting(calList).setName(`Calendar ${i + 1}`);
+        const row = new import_obsidian40.Setting(calList).setName(`Calendar ${i + 1}`);
         row.addText(
           (t) => t.setPlaceholder("Label").setValue(cal.label).onChange(async (v) => {
             cal.label = v.trim() || "Calendar";
@@ -3909,6 +6471,28 @@ var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
           });
           t.inputEl.classList.add("dash-settings-cal-url");
         });
+        row.addColorPicker(
+          (cp) => {
+            var _a;
+            return cp.setValue((_a = cal.color) != null ? _a : "#888888").onChange(async (v) => {
+              cal.color = v;
+              await this.save();
+            });
+          }
+        );
+        row.addExtraButton(
+          (b) => b.setIcon("rotate-ccw").setTooltip("Use the theme's colour").onClick(async () => {
+            delete cal.color;
+            await this.save();
+            renderCals();
+          })
+        );
+        row.addToggle(
+          (t) => t.setTooltip("Count this calendar in \u201Cwhat's next\u201D").setValue(cal.countdown !== false).onChange(async (v) => {
+            cal.countdown = v;
+            await this.save();
+          })
+        );
         row.addExtraButton(
           (b) => b.setIcon("trash").setTooltip("Remove this calendar").onClick(async () => {
             s.agendaUrls.splice(i, 1);
@@ -3917,7 +6501,7 @@ var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
           })
         );
       });
-      const addRow = new import_obsidian27.Setting(calList);
+      const addRow = new import_obsidian40.Setting(calList);
       addRow.addButton(
         (b) => b.setButtonText("+ Add calendar").setDisabled(s.agendaUrls.length >= 20).onClick(async () => {
           if (s.agendaUrls.length >= 20) return;
@@ -3928,8 +6512,8 @@ var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
       );
     };
     renderCals();
-    new import_obsidian27.Setting(containerEl).setName("Search").setHeading();
-    new import_obsidian27.Setting(containerEl).setName("Folders to search").setDesc("The knowledge-base search looks only inside these folders. One folder per line.").addTextArea((t) => {
+    new import_obsidian40.Setting(containerEl).setName("Search").setHeading();
+    new import_obsidian40.Setting(containerEl).setName("Folders to search").setDesc("The knowledge-base search looks only inside these folders. One folder per line.").addTextArea((t) => {
       t.setValue(s.kbSearchPaths.join("\n"));
       t.inputEl.rows = 3;
       t.onChange(async (v) => {
@@ -3942,7 +6526,7 @@ var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
     this.addText(containerEl, "Notes subfolder", "Where new notes go, inside the knowledge-base folder.", s.kbNotesSubfolder, (v) => s.kbNotesSubfolder = v, true);
     this.addText(containerEl, "Categories subfolder", "Where category notes go, inside the knowledge-base folder.", s.kbCategoriesSubfolder, (v) => s.kbCategoriesSubfolder = v || "Categories");
     this.addText(containerEl, "Category list heading", "The heading in a category note under which its notes are listed.", s.kbListHeading, (v) => s.kbListHeading = v || "Notes");
-    new import_obsidian27.Setting(containerEl).setName("Calendar").setHeading();
+    new import_obsidian40.Setting(containerEl).setName("Calendar").setHeading();
     this.addText(
       containerEl,
       "Daily-notes base file",
@@ -3950,11 +6534,11 @@ var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
       s.calendarBasePath,
       (v) => s.calendarBasePath = v || "Logs/Daily notes.base"
     );
-    new import_obsidian27.Setting(containerEl).setName("Second brain").setHeading();
+    new import_obsidian40.Setting(containerEl).setName("Second brain").setHeading();
     this.addText(containerEl, "Second brain folder", "The ongoing-project folder the Second brain panel manages.", s.secondBrainPath, (v) => s.secondBrainPath = v || "Second brain");
     this.addText(containerEl, "Archive subfolder", "Where a completed project is moved, inside the Second brain folder.", s.secondBrainArchiveSubfolder, (v) => s.secondBrainArchiveSubfolder = v || "Archive");
-    new import_obsidian27.Setting(containerEl).setName("Places / navigation").setHeading();
-    new import_obsidian27.Setting(containerEl).setName("Destinations").setDesc("One per line as `Label | target`. A target is a note or folder name (e.g. `Knowledge base`) or, prefixed with `cmd:`, a command id (e.g. `cmd:recipe-manager:recipe-index`).").addTextArea((t) => {
+    new import_obsidian40.Setting(containerEl).setName("Places / navigation").setHeading();
+    new import_obsidian40.Setting(containerEl).setName("Destinations").setDesc("One per line as `Label | target`. A target is a note or folder name (e.g. `Knowledge base`) or, prefixed with `cmd:`, a command id (e.g. `cmd:recipe-manager:recipe-index`).").addTextArea((t) => {
       t.setValue(
         s.places.map((p) => `${p.label} | ${p.type === "command" ? "cmd:" + p.target : p.target}`).join("\n")
       );
@@ -3971,7 +6555,7 @@ var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
         await this.save();
       });
     });
-    new import_obsidian27.Setting(containerEl).setName("To-dos").setHeading();
+    new import_obsidian40.Setting(containerEl).setName("To-dos").setHeading();
     this.addText(
       containerEl,
       "To-do list file",
@@ -3988,13 +6572,88 @@ var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
     );
     this.addText(containerEl, "Completed-tasks heading", "Completed to-dos are logged under this heading in today's note.", s.completedTasksHeading, (v) => s.completedTasksHeading = v || "Completed tasks");
     this.addText(containerEl, "Completed-tasks marker", "Optional. If set, completed tasks go after this marker instead of the heading.", s.completedTasksMarker, (v) => s.completedTasksMarker = v, true);
+    this.addText(
+      containerEl,
+      "Layout file",
+      "Your panel layout and phone tabs are also saved in this Markdown file, so they follow you across devices and survive plugin updates.",
+      s.layoutPath,
+      (v) => s.layoutPath = v || "Daily Dashboard/Dashboard Layout.md"
+    );
+    new import_obsidian40.Setting(containerEl).setName("Shopping & quotes").setHeading();
+    this.addText(containerEl, "Shopping list file", "Where the Shopping panel saves your lists (managed for you \u2014 edit lists on the dashboard).", s.shoppingPath, (v) => s.shoppingPath = v || "Daily Dashboard/Shopping.md");
+    this.addText(containerEl, "Quotes file", "Where the Quote of the Day panel saves your quotes (managed for you).", s.quotesPath, (v) => s.quotesPath = v || "Daily Dashboard/Quotes.md");
+    this.renderBriefSettings(containerEl);
+  }
+  /** The optional AI daily-brief module. Nothing is sent anywhere until a key is
+   * added AND the brief is switched on. */
+  renderBriefSettings(containerEl) {
+    const s = this.plugin.settings;
+    new import_obsidian40.Setting(containerEl).setName("Daily brief (optional)").setDesc(
+      "An AI-written morning summary of your day, plus an \u201CEnd the day\u201D recap written into your daily note. It uses your own API key and only sends the categories you allow below (\u201CEnd the day\u201D also sends what you wrote in today's journal). Also turn on the Daily Brief panel in the list above."
+    ).setHeading();
+    new import_obsidian40.Setting(containerEl).setName("Turn on the daily brief").addToggle(
+      (t) => t.setValue(s.aiDailyBriefEnabled).onChange(async (v) => {
+        s.aiDailyBriefEnabled = v;
+        await this.save();
+      })
+    );
+    new import_obsidian40.Setting(containerEl).setName("Provider").setDesc("Anthropic (Claude), or any OpenAI-compatible service.").addDropdown((dd) => {
+      dd.addOptions({ anthropic: "Anthropic (Claude)", openai: "OpenAI-compatible" });
+      dd.setValue(s.aiProvider).onChange(async (v) => {
+        s.aiProvider = v === "openai" ? "openai" : "anthropic";
+        if (s.aiProvider === "openai" && s.aiModel.startsWith("claude")) s.aiModel = "gpt-4o-mini";
+        if (s.aiProvider === "anthropic" && !s.aiModel.startsWith("claude")) s.aiModel = DEFAULT_SETTINGS.aiModel;
+        await this.save();
+        this.display();
+      });
+    });
+    new import_obsidian40.Setting(containerEl).setName("API key").setDesc("Stored in this plugin's data and in the AI credentials file below so it reaches your other devices. Keep that file out of anything you share.").addText((t) => {
+      t.inputEl.type = "password";
+      t.setPlaceholder("sk-\u2026").setValue(s.aiApiKey).onChange(async (v) => {
+        s.aiApiKey = v.trim();
+        await this.plugin.persistAICreds();
+        await this.save();
+      });
+    });
+    if (s.aiProvider === "openai") {
+      this.addText(containerEl, "Base URL", "The service's API address.", s.aiBaseUrl, (v) => {
+        s.aiBaseUrl = v || DEFAULT_SETTINGS.aiBaseUrl;
+        void this.plugin.persistAICreds();
+      });
+    }
+    this.addText(containerEl, "Model", "The model to use. The default works well; change it only if you know you want another.", s.aiModel, (v) => s.aiModel = v);
+    this.addText(containerEl, "Your name", "So the brief can talk to you by name.", s.aiUserName, (v) => s.aiUserName = v, true);
+    this.addText(containerEl, "Your pronouns", "Optional, e.g. she/her.", s.aiUserPronouns, (v) => s.aiUserPronouns = v, true);
+    new import_obsidian40.Setting(containerEl).setName("About you").setDesc("Optional. Anything the brief should keep in mind.").addTextArea((t) => {
+      t.setValue(s.aiAboutMe);
+      t.inputEl.rows = 3;
+      t.onChange(async (v) => {
+        s.aiAboutMe = v.trim();
+        await this.save();
+      });
+    });
+    const gates = [
+      ["Send today's schedule", "aiBriefIncludeSchedule"],
+      ["Send your to-do list", "aiBriefIncludeTasks"],
+      ["Send who's due a catch-up (Contacts)", "aiBriefIncludePeople"]
+    ];
+    for (const [label, key] of gates) {
+      new import_obsidian40.Setting(containerEl).setName(label).addToggle(
+        (t) => t.setValue(s[key]).onChange(async (v) => {
+          s[key] = v;
+          await this.save();
+        })
+      );
+    }
+    this.addText(containerEl, "End-of-day heading", "The heading in today's note the end-of-day recap is written under.", s.aiEndOfDayHeading, (v) => s.aiEndOfDayHeading = v || "End of day");
+    this.addText(containerEl, "AI credentials file", "The Markdown file the API key is synced through.", s.aiCredentialsPath, (v) => s.aiCredentialsPath = v || "Daily Dashboard/AI Credentials.md");
   }
   themeBlurb(id) {
     var _a, _b;
     return (_b = (_a = THEMES.find((t) => t.id === id)) == null ? void 0 : _a.blurb) != null ? _b : "";
   }
   addText(el, name, desc, value, set, allowEmpty = false) {
-    new import_obsidian27.Setting(el).setName(name).setDesc(desc).addText(
+    new import_obsidian40.Setting(el).setName(name).setDesc(desc).addText(
       (t) => t.setValue(value).onChange(async (v) => {
         const trimmed = v.trim();
         if (!trimmed && !allowEmpty) return;
@@ -4006,8 +6665,10 @@ var DashSettingTab = class extends import_obsidian27.PluginSettingTab {
 };
 
 // src/core/bridge.ts
-var import_obsidian28 = require("obsidian");
+var import_obsidian41 = require("obsidian");
 var RECIPES_ID = "recipe-manager";
+var CRM_ID = "simple-contact-manager";
+var PRIORITY_RANK = { high: 0, medium: 1, low: 2, "": 3 };
 var Bridge = class {
   constructor(app) {
     this.app = app;
@@ -4036,6 +6697,147 @@ var Bridge = class {
     var _a, _b;
     (_b = (_a = this.app.commands) == null ? void 0 : _a.executeCommandById) == null ? void 0 : _b.call(_a, fullId);
   }
+  /** Whether a plugin is installed and turned on — optional modules ask this so
+   * they can hide politely when their companion plugin isn't there. */
+  isPluginEnabled(id) {
+    return this.enabled(id);
+  }
+  // ---------------------------------------------------------------- Contacts
+  crmAvailable() {
+    return this.enabled(CRM_ID);
+  }
+  /** Try to log a specific contact through the plugin's own modal (API v2+).
+   * Returns true if it handled it. */
+  crmLogViaApi(pathOrName) {
+    const api = this.api(CRM_ID);
+    if ((api == null ? void 0 : api.logInteraction) && api.version >= 2) {
+      try {
+        return !!api.logInteraction(pathOrName);
+      } catch (e) {
+        console.error("Daily Dashboard: contacts api logInteraction failed, falling back", e);
+      }
+    }
+    return false;
+  }
+  crmFolder() {
+    var _a, _b, _c;
+    return ((_c = (_b = (_a = this.plugin(CRM_ID)) == null ? void 0 : _a.settings) == null ? void 0 : _b.contactsFolder) != null ? _c : "Contacts").trim();
+  }
+  resolveContact(pathOrName) {
+    var _a;
+    const byPath = this.app.vault.getAbstractFileByPath(pathOrName);
+    if (byPath instanceof import_obsidian41.TFile) return byPath;
+    const folder = this.crmFolder();
+    return (_a = this.app.vault.getMarkdownFiles().find((f) => (!folder || f.path.startsWith(folder + "/")) && f.basename === pathOrName)) != null ? _a : null;
+  }
+  /** Log an interaction for a specific contact ourselves, when the plugin's API
+   * isn't available (older Simple Contact Manager). Mirrors the plugin's write:
+   * update the contact note's Interaction Log, advance the follow-up date in
+   * frontmatter, and write the daily-note line. Returns true on success. */
+  async crmWriteInteraction(pathOrName, noteText) {
+    var _a, _b, _c, _d, _e;
+    const file = this.resolveContact(pathOrName);
+    if (!file) return false;
+    const text = noteText.trim();
+    if (!text) return false;
+    const fm = (_b = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter) != null ? _b : {};
+    const followupDays = Number((_d = (_c = fm.contact) == null ? void 0 : _c.followup_days) != null ? _d : fm.followup_days) || 30;
+    const todayStr2 = today2();
+    const next = (0, import_obsidian41.moment)().add(followupDays, "days").format("YYYY-MM-DD");
+    const name = String((_e = fm.name) != null ? _e : file.basename);
+    await this.app.fileManager.processFrontMatter(file, (f) => {
+      const c = f.contact && typeof f.contact === "object" ? f.contact : f.contact = {};
+      c.last_contacted = todayStr2;
+      c.next_followup = next;
+      f.updated = todayStr2;
+    });
+    await this.app.vault.process(file, (content) => insertInteraction(content, todayStr2, text));
+    const { marker, heading } = this.crmLogTarget();
+    const time = (0, import_obsidian41.moment)().format("HH:mm");
+    try {
+      await appendDailyLogLine(this.app, `- ${time} [[${name}|${name}]] \u2014 ${text}`, { marker, heading, time });
+    } catch (e) {
+      console.error("Daily Dashboard: contacts daily-note write failed", e);
+    }
+    return true;
+  }
+  /** Where Simple Contact Manager writes its daily-note lines (its own settings). */
+  crmLogTarget() {
+    var _a, _b, _c, _d;
+    const s = (_b = (_a = this.plugin(CRM_ID)) == null ? void 0 : _a.settings) != null ? _b : {};
+    return {
+      marker: String((_c = s.dailyNoteMarker) != null ? _c : "%% crm-log %%").trim(),
+      heading: String((_d = s.dailyNoteHeading) != null ? _d : "Contacts reached").trim()
+    };
+  }
+  crmContacts() {
+    var _a;
+    const api = this.api(CRM_ID);
+    if (api == null ? void 0 : api.getContactsSummary) {
+      try {
+        const rows = (_a = api.getContactsSummary()) != null ? _a : [];
+        return rows.map(normalizeCrmRow).sort(sortCrm);
+      } catch (e) {
+        console.error("Daily Dashboard: contacts api read failed, falling back", e);
+      }
+    }
+    return this.crmContactsFallback().sort(sortCrm);
+  }
+  crmContactsFallback() {
+    var _a, _b, _c, _d, _e, _f, _g, _h;
+    const folder = this.crmFolder();
+    const todayStr2 = today2();
+    const rows = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (folder && !file.path.startsWith(folder + "/")) continue;
+      const cache = this.app.metadataCache.getFileCache(file);
+      const fm = cache == null ? void 0 : cache.frontmatter;
+      if (!fm) continue;
+      const tags = cache ? (_a = (0, import_obsidian41.getAllTags)(cache)) != null ? _a : [] : [];
+      const isContact = tags.includes("#contact") || fm.tags === "contact" || Array.isArray(fm.tags) && fm.tags.includes("contact");
+      if (!isContact || fm.is_template === true) continue;
+      const c = (_b = fm.contact) != null ? _b : {};
+      const last = String((_d = (_c = c.last_contacted) != null ? _c : fm.last_contacted) != null ? _d : "").slice(0, 10);
+      const next = String((_f = (_e = c.next_followup) != null ? _e : fm.next_followup) != null ? _f : "").slice(0, 10);
+      rows.push({
+        name: String((_g = fm.name) != null ? _g : file.basename),
+        path: file.path,
+        priority: normalizePriority((_h = c.priority) != null ? _h : fm.priority),
+        daysSince: last ? (0, import_obsidian41.moment)(todayStr2).diff((0, import_obsidian41.moment)(last, "YYYY-MM-DD"), "days") : null,
+        nextFollowup: next,
+        overdue: !!next && next < todayStr2,
+        dueToday: !!next && next === todayStr2
+      });
+    }
+    return rows;
+  }
+  /** Safety-net reconcile: scan contact notes for a `### <today>` block under
+   * `## Interaction Log` and return `[[Name|Name]] — <descriptor>` tails missing
+   * from today's note, so the Contacts card can backfill them. */
+  async crmReconcileLines(date = today2()) {
+    var _a, _b;
+    const folder = this.crmFolder();
+    const { marker, heading } = this.crmLogTarget();
+    const raw = await readDailyNoteRaw(this.app, date);
+    const existing = new Set(
+      readMarkerLogLines(raw, marker, heading).map((l) => l.replace(/^- \d{2}:\d{2}\s*/, "").trim())
+    );
+    const out = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (folder && !file.path.startsWith(folder + "/")) continue;
+      const cache = this.app.metadataCache.getFileCache(file);
+      if (!(cache == null ? void 0 : cache.frontmatter)) continue;
+      const tags = (_a = (0, import_obsidian41.getAllTags)(cache)) != null ? _a : [];
+      if (!tags.includes("#contact")) continue;
+      const name = String((_b = cache.frontmatter.name) != null ? _b : file.basename);
+      const content = await this.app.vault.cachedRead(file);
+      for (const descriptor of interactionsForDate(content, date)) {
+        const tail = `[[${name}|${name}]] \u2014 ${descriptor}`;
+        if (!existing.has(tail)) out.push(tail);
+      }
+    }
+    return out;
+  }
   // ------------------------------------------------------------- Recipes
   recipesAvailable() {
     return this.enabled(RECIPES_ID);
@@ -4045,7 +6847,7 @@ var Bridge = class {
     const v = (_b = (_a = this.plugin(RECIPES_ID)) == null ? void 0 : _a.settings) == null ? void 0 : _b[key];
     return typeof v === "string" && v.trim() ? v.trim() : fallback;
   }
-  async plannedMeals(date = today()) {
+  async plannedMeals(date = today2()) {
     var _a, _b;
     const api = this.api(RECIPES_ID);
     if (api == null ? void 0 : api.getPlannedMeals) {
@@ -4085,7 +6887,7 @@ var Bridge = class {
   async groceryList() {
     const path = this.groceryListPath();
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian28.TFile)) return { path, items: [], exists: false };
+    if (!(file instanceof import_obsidian41.TFile)) return { path, items: [], exists: false };
     const content = await this.app.vault.cachedRead(file);
     const items = [];
     for (const line of content.split("\n")) {
@@ -4095,15 +6897,76 @@ var Bridge = class {
     return { path, items, exists: true };
   }
 };
-function today() {
-  return (0, import_obsidian28.moment)().format("YYYY-MM-DD");
+function today2() {
+  return (0, import_obsidian41.moment)().format("YYYY-MM-DD");
 }
 function stripFormatting(s) {
   return s.replace(/\*\*/g, "").replace(/\*(?!\*)/g, "").replace(/\s+\*\([^)]*\)\s*$/, "").trim();
 }
+function normalizeCrmRow(r) {
+  var _a, _b, _c, _d;
+  return {
+    name: (_a = r.name) != null ? _a : "",
+    path: (_b = r.path) != null ? _b : "",
+    priority: normalizePriority(r.priority),
+    daysSince: (_c = r.daysSince) != null ? _c : null,
+    nextFollowup: (_d = r.nextFollowup) != null ? _d : "",
+    overdue: !!r.overdue,
+    dueToday: !!r.dueToday
+  };
+}
+function normalizePriority(v) {
+  const s = String(v != null ? v : "").trim().toLowerCase();
+  return s === "high" || s === "medium" || s === "low" ? s : "";
+}
+function sortCrm(a, b) {
+  var _a, _b;
+  const bucket = (r) => r.overdue ? 0 : r.dueToday ? 1 : 2;
+  return bucket(a) - bucket(b) || PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || ((_a = b.daysSince) != null ? _a : -1) - ((_b = a.daysSince) != null ? _b : -1);
+}
+function insertInteraction(content, date, noteText) {
+  const logHeading = /^## Interaction Log\s*$/m;
+  const todayHeading = `### ${date}`;
+  if (!logHeading.test(content)) {
+    return `${content.replace(/\s+$/, "")}
+
+## Interaction Log
+
+${todayHeading}
+- ${noteText}
+`;
+  }
+  const todayAtTop = new RegExp(`^## Interaction Log\\n+${todayHeading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m");
+  if (todayAtTop.test(content)) {
+    return content.replace(todayAtTop, (match) => `${match}
+- ${noteText}`);
+  }
+  return content.replace(logHeading, (match) => `${match}
+
+${todayHeading}
+- ${noteText}
+`);
+}
+function interactionsForDate(content, date) {
+  const lines = content.split("\n");
+  const logIdx = lines.findIndex((l) => /^##\s+Interaction Log\s*$/i.test(l));
+  if (logIdx === -1) return [];
+  const dateIdx = lines.findIndex((l, i) => i > logIdx && l.trim() === `### ${date}`);
+  if (dateIdx === -1) return [];
+  const out = [];
+  for (let i = dateIdx + 1; i < lines.length; i++) {
+    if (/^#{1,3}\s/.test(lines[i])) break;
+    const m = lines[i].match(/^-\s+(.*)$/);
+    if (m) {
+      const descriptor = m[1].trim();
+      if (descriptor && descriptor.toLowerCase() !== "contact created") out.push(descriptor);
+    }
+  }
+  return out;
+}
 
 // src/view.ts
-var import_obsidian29 = require("obsidian");
+var import_obsidian42 = require("obsidian");
 
 // src/companion.ts
 function friendlyCompanion(bridge) {
@@ -4123,11 +6986,14 @@ function friendlyCompanion(bridge) {
 
 // src/view.ts
 var VIEW_TYPE_DASH = "daily-dashboard";
-var DashView = class extends import_obsidian29.ItemView {
+var DashView = class extends import_obsidian42.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
     this.mounted = [];
+    /** The phone tab currently shown. Kept on the view so a refresh never bumps
+     * you back to the first tab. */
+    this.activeTabId = null;
   }
   getViewType() {
     return VIEW_TYPE_DASH;
@@ -4194,15 +7060,63 @@ var DashView = class extends import_obsidian29.ItemView {
     root.addClass("dash-root");
     root.dataset.theme = this.plugin.settings.theme;
     this.renderChrome(root);
-    this.grid = root.createDiv({ cls: "dash-grid" });
     const s = this.plugin.settings;
-    const panels = createPanels(s.panelOrder, s.enabledPanels, this.plugin);
+    const tabsActive = import_obsidian42.Platform.isMobile && s.mobileTabs && s.tabs.length > 0;
+    let visible = null;
+    if (tabsActive) {
+      if (!this.activeTabId || !s.tabs.some((t) => t.id === this.activeTabId)) this.activeTabId = this.defaultTabId(s);
+      this.renderTabBar(root, s);
+      visible = this.visibleIdsForTab(s, this.activeTabId);
+    }
+    this.grid = root.createDiv({ cls: "dash-grid" });
+    let panels = createPanels(s.panelOrder, s.enabledPanels, this.plugin);
+    if (visible) panels = panels.filter((p) => visible.has(p.id));
     const ctx = this.ctx();
+    const layout = computeLayout(s.panelOrder, s.enabledPanels, s.panelColumns, s.panelSpans);
+    const placeById = new Map(layout.placements.map((p) => [p.id, p]));
+    if (layout.configured) {
+      this.grid.addClass("dash-grid-cols");
+      this.grid.style.setProperty("--dash-cols", String(layout.columns));
+    }
     for (const panel of panels) {
       const host = this.grid.createDiv({ cls: "dash-panel" });
       host.dataset.panel = panel.id;
+      const place = layout.configured ? placeById.get(panel.id) : void 0;
+      if (place) host.style.gridColumn = `${place.column} / span ${place.span}`;
       this.mounted.push({ panel, host });
       await this.mountPanel(panel, host, ctx);
+    }
+    if (visible && panels.length === 0) {
+      this.grid.createDiv({ cls: "dash-empty dash-tab-empty", text: "Nothing on this tab yet \u2014 choose a tab for some panels in the plugin settings." });
+    }
+    root.createDiv({ cls: "dash-scroll-spacer" });
+  }
+  defaultTabId(s) {
+    if (s.defaultTabId && s.tabs.some((t) => t.id === s.defaultTabId)) return s.defaultTabId;
+    return s.tabs[0].id;
+  }
+  /** Enabled panels on a tab. Unassigned panels go to the default tab, so no
+   * panel is ever hidden from every tab. */
+  visibleIdsForTab(s, tabId) {
+    const def = this.defaultTabId(s);
+    const set = /* @__PURE__ */ new Set();
+    for (const id of s.panelOrder) {
+      if (s.enabledPanels[id] === false) continue;
+      const a = s.tabAssignments[id];
+      if ((a && s.tabs.some((t) => t.id === a) ? a : def) === tabId) set.add(id);
+    }
+    return set;
+  }
+  renderTabBar(root, s) {
+    const bar = root.createDiv({ cls: "dash-tabbar" });
+    for (const tab of s.tabs) {
+      const b = bar.createEl("button", { cls: "dash-tab", text: tab.name || "Tab" });
+      b.toggleClass("is-active", tab.id === this.activeTabId);
+      b.addEventListener("click", () => {
+        if (this.activeTabId === tab.id) return;
+        this.activeTabId = tab.id;
+        void this.build();
+      });
     }
   }
   renderChrome(root) {
@@ -4211,7 +7125,7 @@ var DashView = class extends import_obsidian29.ItemView {
     brand.appendChild(dashMark());
     brand.createDiv({ cls: "dash-brand-name", text: "Daily Dashboard" });
     const refresh = header.createEl("button", { cls: "dash-icon-btn", attr: { "aria-label": "Refresh" } });
-    (0, import_obsidian29.setIcon)(refresh, "refresh-cw");
+    (0, import_obsidian42.setIcon)(refresh, "refresh-cw");
     refresh.addEventListener("click", () => void this.refreshPanels("manual"));
   }
   async mountPanel(panel, host, ctx) {
@@ -4280,13 +7194,77 @@ function dashMark() {
   return svg;
 }
 
+// src/agenda-log.ts
+var import_obsidian43 = require("obsidian");
+var AGENDA_HEADING = "Agenda";
+var AGENDA_MARKER = "%% agenda-log %%";
+async function logAgendaToDailyNote(plugin) {
+  const s = plugin.settings;
+  const today3 = (0, import_obsidian43.moment)().format("YYYY-MM-DD");
+  const items = [];
+  for (const cal of s.agendaUrls) {
+    const cache = plugin.agendaCache[cal.url];
+    if (cache == null ? void 0 : cache.text) {
+      try {
+        items.push(...eventsOnDate(parseICS(cache.text), today3));
+      } catch (e) {
+      }
+    }
+  }
+  for (const ev of plugin.localEvents.filter((e) => e.date === today3)) {
+    items.push(localEventToAgendaItem(ev));
+  }
+  if (items.length === 0) {
+    new import_obsidian43.Notice("Nothing on today's agenda.");
+    return;
+  }
+  items.sort((a, b) => a.sortKey - b.sortKey);
+  for (const it of items) {
+    const time = it.allDay ? "00:00" : (0, import_obsidian43.moment)(it.startMs).format("HH:mm");
+    const when = it.allDay ? "all-day" : it.timeLabel || time;
+    const loc = it.location ? ` @ ${it.location}` : "";
+    const line = `- ${time} ${it.summary}${loc}${it.allDay ? " (all-day)" : ` (${when})`}`;
+    await appendDailyLogLine(plugin.app, line, { heading: AGENDA_HEADING, marker: AGENDA_MARKER, time });
+  }
+  new import_obsidian43.Notice(`Logged ${items.length} agenda item${items.length === 1 ? "" : "s"} to today's note.`);
+}
+
 // src/main.ts
-var DailyDashPlugin = class extends import_obsidian30.Plugin {
+var LEGACY_PANELS = ["clock", "verse", "todo", "agenda", "journal", "meals", "search", "calendar", "secondbrain", "places"];
+var DIRECTIVES_SYNC_GRACE_MS = 3e4;
+var DailyDashPlugin = class extends import_obsidian44.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
     this.runtime = { sessionStart: Date.now(), previousAccess: 0, typingUntil: 0, textFocused: false };
     this.refreshTimer = null;
+    this.midnightTimer = null;
+    /**
+     * Tiny read/write API for companion plugins. Recipe Manager can call
+     * `importGroceryMarkdown` to send a generated grocery list straight into the
+     * Shopping panel's store. A Markdown string in, a count of new items out.
+     */
+    this.api = {
+      version: 1,
+      importGroceryMarkdown: async (markdown, listName = "Groceries") => {
+        const list = (listName || "Groceries").trim() || "Groceries";
+        const parsed = parseGroceryNote(markdown, list);
+        if (parsed.length === 0) return 0;
+        const store = await loadShopping(this);
+        if (!store.lists.includes(list)) store.lists.push(list);
+        const existing = new Set(itemsFor(store, list).map((i) => i.name.toLowerCase()));
+        let added = 0;
+        for (const it of parsed) {
+          if (existing.has(it.name.toLowerCase())) continue;
+          existing.add(it.name.toLowerCase());
+          store.items.push(it);
+          added++;
+        }
+        if (added > 0) await saveShopping(this, store);
+        this.refreshOpenViews("manual");
+        return added;
+      }
+    };
   }
   async onload() {
     this.registerView(VIEW_TYPE_DASH, (leaf) => new DashView(leaf, this));
@@ -4306,10 +7284,35 @@ var DailyDashPlugin = class extends import_obsidian30.Plugin {
     }));
     this.directives = new DirectivesStore(this.app, () => this.settings.directivesPath, {
       header: "%% Daily Dashboard \u2014 your saved to-do list. This file is managed automatically; add and edit your to-dos in the dashboard, not here. %%",
-      defaultPath: "Daily Dashboard/To-dos.md"
+      defaultPath: "Daily Dashboard/To-dos.md",
+      hasSeenFile: () => {
+        var _a;
+        return ((_a = this.data) == null ? void 0 : _a.directivesFileSeen) === true;
+      },
+      markSeenFile: () => {
+        if (this.data && !this.data.directivesFileSeen) {
+          this.data.directivesFileSeen = true;
+          void this.saveData_();
+        }
+      },
+      getBackup: () => {
+        var _a, _b;
+        return (_b = (_a = this.data) == null ? void 0 : _a.directivesBackup) != null ? _b : [];
+      },
+      setBackup: (items) => {
+        if (!this.data) return;
+        this.data.directivesBackup = items;
+        void this.saveData_();
+      }
     });
     this.localEventsStore = new LocalEventsFileStore(this.app, () => this.settings.localEventsPath, {
       defaultPath: "Daily Dashboard/Local Events.md"
+    });
+    this.layoutStore = new LayoutStore(this.app, () => this.settings.layoutPath, {
+      defaultPath: "Daily Dashboard/Dashboard Layout.md"
+    });
+    this.aiCreds = new AICredsStore(this.app, () => this.settings.aiCredentialsPath, {
+      defaultPath: "Daily Dashboard/AI Credentials.md"
     });
     this.todos = new TodoStore(
       this.app,
@@ -4328,11 +7331,8 @@ var DailyDashPlugin = class extends import_obsidian30.Plugin {
       name: "Open dashboard",
       callback: () => void this.openDashboard()
     });
-    this.addCommand({
-      id: "add-event",
-      name: "Add an event to today's agenda",
-      callback: () => new LocalEventModal(this.app, this.localEventsStore, void 0, () => this.refreshOpenViews("vault")).open()
-    });
+    this.registerCommands();
+    this.registerObsidianProtocolHandler("daily-dash", (params) => void this.handleUri(params));
     this.addSettingTab(new DashSettingTab(this.app, this));
     this.registerEvent(this.app.metadataCache.on("changed", () => this.scheduleRefresh()));
     this.registerEvent(this.app.vault.on("modify", (file) => this.onVaultChange(file.path)));
@@ -4341,12 +7341,20 @@ var DailyDashPlugin = class extends import_obsidian30.Plugin {
     this.registerEvent(this.app.vault.on("rename", () => this.scheduleRefresh()));
     this.app.workspace.onLayoutReady(() => {
       this.rebuildOpenViews();
-      void Promise.all([this.loadDirectives(), this.localEventsStore.load()]).then(
+      void Promise.all([this.loadDirectives(), this.localEventsStore.load(), this.loadLayout(), this.loadAICreds()]).then(
         () => this.refreshOpenViews("vault")
       );
+      this.scheduleMidnight();
       this.registerEvent(
-        this.app.workspace.on("active-leaf-change", (leaf) => this.maybeReplaceEmptyLeaf(leaf))
+        this.app.workspace.on("active-leaf-change", (leaf) => {
+          var _a;
+          this.maybeReplaceEmptyLeaf(leaf);
+          if (((_a = leaf == null ? void 0 : leaf.view) == null ? void 0 : _a.getViewType()) === VIEW_TYPE_DASH) this.refreshOpenViews("open");
+        })
       );
+      this.registerDomEvent(document, "visibilitychange", () => {
+        if (document.visibilityState === "visible") this.refreshOpenViews("open");
+      });
       if (this.settings.replaceNewTab) this.replaceActiveEmptyLeaf();
       if (this.settings.openOnStartup) void this.openDashboard(false);
     });
@@ -4366,22 +7374,249 @@ var DailyDashPlugin = class extends import_obsidian30.Plugin {
   }
   onunload() {
     if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
+    if (this.midnightTimer !== null) window.clearTimeout(this.midnightTimer);
+  }
+  // ----------------------------------------------- commands + URI
+  /** Everything the dashboard does, reachable from the command palette, a phone
+   * shortcut, or a hotkey — each works whether or not the dashboard is open. */
+  registerCommands() {
+    const done = () => this.refreshOpenViews("vault");
+    this.addCommand({
+      id: "add-todo",
+      name: "Add a to-do",
+      callback: () => new TodoEditModal2(this.app, this.todos, void 0, done).open()
+    });
+    this.addCommand({
+      id: "complete-next-todo",
+      name: "Complete the next to-do",
+      callback: () => void this.completeNextTodo()
+    });
+    for (const field of Object.keys(JOURNAL_FIELDS)) {
+      this.addCommand({
+        id: `log-${field}`,
+        name: `Write in ${JOURNAL_FIELDS[field].label}`,
+        callback: () => this.promptJournal(field)
+      });
+    }
+    this.addCommand({
+      id: "add-event",
+      name: "Add an event to today's agenda",
+      callback: () => new LocalEventModal(this.app, friendlyLocalEvents(this), void 0, done).open()
+    });
+    this.addCommand({
+      id: "log-agenda",
+      name: "Copy today's agenda into today's note",
+      callback: () => void logAgendaToDailyNote(this)
+    });
+    this.addCommand({
+      id: "weekly-review",
+      name: "Week in review",
+      callback: () => new WeekReviewModal(this.app, friendlyWeekReviewConfig(this)).open()
+    });
+    this.addCommand({
+      id: "weekly-goals",
+      name: "Set this week's goals",
+      callback: () => new WeeklyGoalsModal(this.app, friendlyWeeklyGoals(this), this.todos, currentWeekKey(), done, FRIENDLY_WEEKLYGOALS_COPY).open()
+    });
+    this.addCommand({
+      id: "shopping-list",
+      name: "Open the shopping list",
+      callback: () => new ShoppingManagerModal(this.app, this, void 0, done).open()
+    });
+    this.addCommand({
+      id: "add-shopping-item",
+      name: "Add a shopping item",
+      callback: () => new ShoppingItemModal(this.app, this, "Groceries", null, done).open()
+    });
+    this.addCommand({
+      id: "add-quote",
+      name: "Add a quote",
+      callback: () => new QuoteEditModal(this.app, this, null, done).open()
+    });
+    this.addCommand({
+      id: "quotes-catalogue",
+      name: "Browse quotes",
+      callback: () => new QuoteCatalogueModal(this.app, this, done).open()
+    });
+    this.addCommand({
+      id: "generate-daily-brief",
+      name: "Write today's brief (AI)",
+      callback: async () => {
+        await generateMorningBrief(this, true);
+        this.refreshOpenViews("manual");
+      }
+    });
+    this.addCommand({
+      id: "end-the-day",
+      name: "End the day \u2014 add a recap to today's note (AI)",
+      callback: () => void generateEndOfDay(this)
+    });
+    this.addCommand({
+      id: "refresh",
+      name: "Refresh dashboard",
+      callback: () => this.refreshOpenViews("manual")
+    });
+    this.addCommand({
+      id: "todo-status",
+      name: "Show to-do list status (troubleshooting)",
+      callback: async () => {
+        var _a;
+        const path = this.directives.path();
+        const f = this.app.vault.getAbstractFileByPath(path);
+        const lines = [
+          `File: ${path}`,
+          `On disk: ${f instanceof import_obsidian44.TFile ? `yes (${(await this.app.vault.read(f).catch(() => "")).length} bytes)` : "no"}`,
+          `In memory: ${this.directives.getItems().length} to-dos`,
+          `Backup on this device: ${((_a = this.data.directivesBackup) != null ? _a : []).length}`,
+          `Last load: ${this.directives.lastStatus}`
+        ];
+        new import_obsidian44.Notice(lines.join("\n"), 15e3);
+      }
+    });
+    this.addCommand({
+      id: "restore-todo-backup",
+      name: "Restore the to-do list from this device's backup",
+      callback: async () => {
+        var _a;
+        const backup = (_a = this.data.directivesBackup) != null ? _a : [];
+        if (backup.length === 0) {
+          new import_obsidian44.Notice("There's no to-do backup on this device to restore from.");
+          return;
+        }
+        this.directives.setItems(backup.map((t) => ({ ...t })));
+        await this.directives.save();
+        this.refreshOpenViews("manual");
+        new import_obsidian44.Notice(`Restored ${backup.length} to-do${backup.length === 1 ? "" : "s"}.`);
+      }
+    });
+  }
+  /** Complete the top to-do still open today — the same path as ticking it. */
+  async completeNextTodo() {
+    const inst = this.todos.firstPending();
+    if (!inst) {
+      new import_obsidian44.Notice("Nothing left to do today. \u{1F389}");
+      return;
+    }
+    await this.todos.toggleComplete(inst.item.id);
+    this.refreshOpenViews("vault");
+    new import_obsidian44.Notice(`Done: ${inst.item.text}`);
+  }
+  promptJournal(field) {
+    new PromptModal(
+      this.app,
+      { title: JOURNAL_FIELDS[field].label, placeholder: "What's on your mind?", cta: "Save", multiline: true },
+      (text) => void this.writeJournal(field, text)
+    ).open();
+  }
+  /** Append `text` to a journal section of today's note (creating it if needed). */
+  async writeJournal(field, text) {
+    const { label, spec } = JOURNAL_FIELDS[field];
+    try {
+      const wrote = await appendToDailyField(this.app, spec, text, label);
+      if (wrote) {
+        this.refreshOpenViews("vault");
+        new import_obsidian44.Notice(`Saved to ${label}.`);
+      } else {
+        new import_obsidian44.Notice(`Nothing was saved \u2014 there's no text, or today's note couldn't be found.`);
+      }
+    } catch (e) {
+      console.error("Daily Dashboard: journal write failed", e);
+      new import_obsidian44.Notice("That couldn't be saved. Please try again.");
+    }
+  }
+  /** `obsidian://daily-dash?action=…` — headless with `text`, falls back to the
+   * matching window without it. */
+  async handleUri(params) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const action = ((_a = params.action) != null ? _a : "").toLowerCase();
+    const done = () => this.refreshOpenViews("vault");
+    switch (action) {
+      case "":
+      case "open":
+        await this.openDashboard();
+        return;
+      case "complete-next":
+        await this.completeNextTodo();
+        return;
+      case "add-todo": {
+        const text = ((_b = params.text) != null ? _b : "").trim();
+        if (text) {
+          await this.todos.add({ text });
+          done();
+          new import_obsidian44.Notice(`Added to-do: ${text}`);
+        } else {
+          new TodoEditModal2(this.app, this.todos, void 0, done).open();
+        }
+        return;
+      }
+      case "log": {
+        const field = ((_c = params.field) != null ? _c : "").toLowerCase();
+        if (!isJournalField(field)) {
+          new import_obsidian44.Notice("Unknown journal section. Use braindump, journal, or tomorrow.");
+          return;
+        }
+        const text = ((_d = params.text) != null ? _d : "").trim();
+        if (text) await this.writeJournal(field, text);
+        else this.promptJournal(field);
+        return;
+      }
+      case "add-event": {
+        const summary = ((_f = (_e = params.summary) != null ? _e : params.text) != null ? _f : "").trim();
+        if (summary) {
+          const date = /^\d{4}-\d{2}-\d{2}$/.test((_g = params.date) != null ? _g : "") ? params.date : (0, import_obsidian44.moment)().format("YYYY-MM-DD");
+          const start = params.start || void 0;
+          await this.addLocalEvent({ summary, date, start, end: start && params.end ? params.end : void 0 });
+          new import_obsidian44.Notice(`Added event: ${summary}`);
+        } else {
+          new LocalEventModal(this.app, friendlyLocalEvents(this), void 0, done).open();
+        }
+        return;
+      }
+      default:
+        new import_obsidian44.Notice("Daily Dashboard didn't recognise that link.");
+    }
   }
   // ------------------------------------------------------------- data
   async load_() {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     const raw = await this.loadData();
     this.settings = mergeSettings(raw == null ? void 0 : raw.settings);
     this.data = {
       settings: this.settings,
       todos: (_a = raw == null ? void 0 : raw.todos) != null ? _a : [],
       seeded: (_b = raw == null ? void 0 : raw.seeded) != null ? _b : false,
-      agendaCache: (_c = raw == null ? void 0 : raw.agendaCache) != null ? _c : {}
+      agendaCache: (_c = raw == null ? void 0 : raw.agendaCache) != null ? _c : {},
+      weeklyGoals: (_d = raw == null ? void 0 : raw.weeklyGoals) != null ? _d : {},
+      directivesFileSeen: (_e = raw == null ? void 0 : raw.directivesFileSeen) != null ? _e : false,
+      directivesBackup: (_f = raw == null ? void 0 : raw.directivesBackup) != null ? _f : [],
+      briefDate: (_g = raw == null ? void 0 : raw.briefDate) != null ? _g : "",
+      briefText: (_h = raw == null ? void 0 : raw.briefText) != null ? _h : "",
+      // A fresh install knows every panel; an upgrade knows only the old set.
+      knownPanels: (_i = raw == null ? void 0 : raw.knownPanels) != null ? _i : (raw == null ? void 0 : raw.settings) ? LEGACY_PANELS : [...PANEL_ORDER]
     };
+    this.placeNewPanels();
     await this.saveData_();
   }
-  /** Load the to-do list from its vault file the first time; nothing is seeded
-   * (a fresh install starts with an empty list — the user's list is their own). */
+  /** Slot panels added by an update next to their default neighbour (instead of
+   * at the very bottom), once. Their on/off state comes from the defaults. */
+  placeNewPanels() {
+    var _a;
+    const known = new Set((_a = this.data.knownPanels) != null ? _a : []);
+    const order = this.settings.panelOrder;
+    for (const id of PANEL_ORDER) {
+      if (known.has(id)) continue;
+      const at = order.indexOf(id);
+      if (at >= 0) order.splice(at, 1);
+      const prev = PANEL_ORDER.slice(0, PANEL_ORDER.indexOf(id)).reverse().find((p) => order.includes(p));
+      order.splice(prev ? order.indexOf(prev) + 1 : 0, 0, id);
+      this.settings.enabledPanels[id] = DEFAULT_SETTINGS.enabledPanels[id];
+      known.add(id);
+    }
+    this.data.knownPanels = [...known];
+  }
+  /** Load the to-do list from its vault file. Sync-safe: a missing file may just
+   * mean Obsidian Sync hasn't delivered it yet, so nothing is written until the
+   * real copy has had time to arrive (or there's genuine legacy data to move). */
   async loadDirectives() {
     var _a;
     const existed = await this.directives.load();
@@ -4390,13 +7625,69 @@ var DailyDashPlugin = class extends import_obsidian30.Plugin {
       return;
     }
     const legacy = (_a = this.data.todos) != null ? _a : [];
-    if (legacy.length > 0) this.directives.setItems(legacy);
-    this.data.seeded = true;
-    this.data.todos = [];
-    await this.directives.save();
-    await this.saveData_();
+    if (legacy.length > 0) {
+      this.directives.setItems(legacy);
+      this.data.seeded = true;
+      this.data.todos = [];
+      await this.directives.save();
+      await this.saveData_();
+      return;
+    }
+    this.directives.deferCreateFor(DIRECTIVES_SYNC_GRACE_MS);
+    const poll = async () => {
+      if (this.directives.hasLoaded()) return;
+      const arrived = await this.directives.load();
+      if (arrived && !this.directives.isUnreadable()) this.refreshOpenViews("vault");
+    };
+    for (const ms of [2e3, 5e3, 1e4, 2e4, DIRECTIVES_SYNC_GRACE_MS]) {
+      this.registerTimeout(window.setTimeout(() => void poll(), ms));
+    }
+    this.registerTimeout(
+      window.setTimeout(async () => {
+        const recreated = await this.directives.ensureFromBackup();
+        if (!recreated) await this.directives.save();
+        this.refreshOpenViews("vault");
+      }, DIRECTIVES_SYNC_GRACE_MS + 1500)
+    );
   }
-  /** Vault create/modify router: reload the to-do list when its file changes on
+  registerTimeout(id) {
+    this.register(() => window.clearTimeout(id));
+  }
+  /** The synced layout file wins when present; otherwise seed it from this
+   * device so it starts following you around. */
+  async loadLayout() {
+    if (await this.layoutStore.load()) {
+      applyLayout(this.settings, this.layoutStore.get());
+      await this.saveData_();
+      this.rebuildOpenViews();
+    } else {
+      await this.layoutStore.seedFrom(layoutFromSettings(this.settings));
+    }
+  }
+  /** Save a layout edit to both data.json and the synced layout file. */
+  async persistLayout() {
+    await this.saveData_();
+    await this.layoutStore.setFromSettings(layoutFromSettings(this.settings));
+  }
+  /** The synced credentials file wins when it has a key; otherwise seed it from
+   * this device's key (if any) so the other devices get it. */
+  async loadAICreds() {
+    await this.aiCreds.load();
+    const fileKey = this.aiCreds.getApiKey();
+    if (fileKey) {
+      this.settings.aiApiKey = fileKey;
+      const base = this.aiCreds.getBaseUrl();
+      if (base) this.settings.aiBaseUrl = base;
+      await this.saveData_();
+    } else if (this.settings.aiApiKey) {
+      await this.aiCreds.seedFrom(this.settings.aiApiKey, this.settings.aiBaseUrl);
+    }
+  }
+  /** Mirror the API key into the synced credentials file after a settings edit. */
+  async persistAICreds() {
+    await this.aiCreds.setFromSettings(this.settings.aiApiKey, this.settings.aiBaseUrl);
+  }
+  /** Vault create/modify router: reload a synced store when its file changes on
    * another device (Obsidian Sync), otherwise a plain debounced refresh. */
   onVaultChange(path) {
     if (this.directives.isDirectivesPath(path)) {
@@ -4411,6 +7702,27 @@ var DailyDashPlugin = class extends import_obsidian30.Plugin {
       });
       return;
     }
+    if (this.layoutStore.isLayoutPath(path)) {
+      void this.layoutStore.onExternalChange(path).then((changed) => {
+        if (changed) {
+          applyLayout(this.settings, this.layoutStore.get());
+          void this.saveData_();
+          this.rebuildOpenViews();
+        }
+      });
+      return;
+    }
+    if (this.aiCreds.isCredsPath(path)) {
+      void this.aiCreds.onExternalChange(path).then((changed) => {
+        if (changed) {
+          this.settings.aiApiKey = this.aiCreds.getApiKey();
+          const base = this.aiCreds.getBaseUrl();
+          if (base) this.settings.aiBaseUrl = base;
+          this.refreshOpenViews("vault");
+        }
+      });
+      return;
+    }
     this.scheduleRefresh();
   }
   async saveData_() {
@@ -4420,9 +7732,56 @@ var DailyDashPlugin = class extends import_obsidian30.Plugin {
   get agendaCache() {
     return this.data.agendaCache;
   }
+  // ------------------------------------------------------- local events
   /** The dashboard-only local events, read live from the synced Markdown file. */
   get localEvents() {
     return this.localEventsStore.getEvents();
+  }
+  async addLocalEvent(ev) {
+    await this.localEventsStore.add(ev);
+    this.refreshOpenViews("vault");
+  }
+  async updateLocalEvent(id, patch) {
+    await this.localEventsStore.update(id, patch);
+    this.refreshOpenViews("vault");
+  }
+  async removeLocalEvent(id) {
+    await this.localEventsStore.remove(id);
+    this.refreshOpenViews("vault");
+  }
+  // ------------------------------------------------------- weekly goals
+  weeklyGoalsFor(weekKey) {
+    var _a;
+    return (_a = this.data.weeklyGoals[weekKey]) != null ? _a : [];
+  }
+  async addWeeklyGoal(weekKey, text) {
+    var _a;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const list = (_a = this.data.weeklyGoals[weekKey]) != null ? _a : this.data.weeklyGoals[weekKey] = [];
+    list.push({ id: localId(), text: trimmed });
+    await this.saveData_();
+  }
+  async removeWeeklyGoal(weekKey, id) {
+    const list = this.data.weeklyGoals[weekKey];
+    if (!list) return;
+    this.data.weeklyGoals[weekKey] = list.filter((g) => g.id !== id);
+    if (this.data.weeklyGoals[weekKey].length === 0) delete this.data.weeklyGoals[weekKey];
+    await this.saveData_();
+  }
+  // ------------------------------------------------------- daily brief cache
+  getBriefDate() {
+    var _a;
+    return (_a = this.data.briefDate) != null ? _a : "";
+  }
+  getBriefText() {
+    var _a;
+    return (_a = this.data.briefText) != null ? _a : "";
+  }
+  async setBrief(date, text) {
+    this.data.briefDate = date;
+    this.data.briefText = text;
+    await this.saveData_();
   }
   // ------------------------------------------------------------- view
   async openDashboard(reveal = true) {
@@ -4456,6 +7815,17 @@ var DailyDashPlugin = class extends import_obsidian30.Plugin {
       if (view instanceof DashView) view.applyTheme();
     }
   }
+  /** Re-arm a one-shot timer for just after local midnight, so "today" rolls
+   * over on a dashboard left open overnight. */
+  scheduleMidnight() {
+    if (this.midnightTimer !== null) window.clearTimeout(this.midnightTimer);
+    const msToMidnight = (0, import_obsidian44.moment)().endOf("day").valueOf() - Date.now() + 2e3;
+    this.midnightTimer = window.setTimeout(() => {
+      this.midnightTimer = null;
+      this.refreshOpenViews("vault");
+      this.scheduleMidnight();
+    }, Math.max(1e3, msToMidnight));
+  }
   scheduleRefresh() {
     if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
     this.refreshTimer = window.setTimeout(() => {
@@ -4468,3 +7838,8 @@ var DailyDashPlugin = class extends import_obsidian30.Plugin {
     }, 300);
   }
 };
+function localId() {
+  const c = globalThis.crypto;
+  if (c == null ? void 0 : c.randomUUID) return c.randomUUID();
+  return "g-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+}

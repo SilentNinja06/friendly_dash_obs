@@ -1,4 +1,4 @@
-import { headingField } from "dash-core";
+import { JOURNAL_FIELDS } from "./core/journalfields";
 import type { SearchCopy, SecondBrainCopy, CategoryModalsCopy, PlacesCopy, JournalCopy, MealsCopy } from "dash-core";
 
 /**
@@ -8,6 +8,9 @@ import type { SearchCopy, SecondBrainCopy, CategoryModalsCopy, PlacesCopy, Journ
  * sibling dashboard's voice. `{n}`/`{name}`/`{note}`/`{category}` are substituted
  * by the panels.
  */
+
+/** Tooltip on a button whose companion plugin isn't installed or turned on. */
+export const COMMAND_OFFLINE = "This button needs its plugin. Enable the matching plugin to turn it on.";
 
 /** Note/category creation + filing modals (shared by the Search card). */
 export const FRIENDLY_CATEGORY_COPY: CategoryModalsCopy = {
@@ -58,11 +61,7 @@ export const FRIENDLY_JOURNAL_COPY: JournalCopy = {
 	title: "Journal",
 	carryHeading: "Reference tomorrow",
 	carryLabel: "From yesterday — to reference today",
-	fields: [
-		{ label: "Brain dump", spec: headingField("Brain dump"), placeholder: "Write in “Brain dump”…" },
-		{ label: "Journal", spec: headingField("Journal"), placeholder: "Write in “Journal”…" },
-		{ label: "Reference tomorrow", spec: headingField("Reference tomorrow"), placeholder: "Write in “Reference tomorrow”…" },
-	],
+	fields: Object.values(JOURNAL_FIELDS).map((f) => ({ label: f.label, spec: f.spec, placeholder: `Write in “${f.label}”…` })),
 };
 
 /** The Meals + grocery card (reads Recipe Manager through the bridge). The
@@ -78,7 +77,7 @@ export const FRIENDLY_MEALS_COPY: MealsCopy = {
 	noGroceryAt: "No grocery list yet. Use “Build grocery list” below to make one.",
 	groceryEmpty: "Your grocery list is empty.",
 	remaining: "{remaining} of {total} still to get",
-	commandOffline: "This button needs its plugin. Enable the matching plugin to turn it on.",
+	commandOffline: COMMAND_OFFLINE,
 	commands: [
 		{ id: "recipe-manager:meal-plan", label: "Plan a meal", cls: "dash-btn-primary" },
 		{ id: "recipe-manager:grocery-list", label: "Build grocery list" },
@@ -92,7 +91,7 @@ export const FRIENDLY_MEALS_COPY: MealsCopy = {
 export const FRIENDLY_PLACES_COPY: PlacesCopy = {
 	title: "Places",
 	empty: "No places yet. Add shortcuts to your favourite notes and folders in the plugin settings.",
-	commandOffline: "This button needs its plugin. Enable the matching plugin to turn it on.",
+	commandOffline: COMMAND_OFFLINE,
 };
 
 /** The Second Brain (ongoing-projects) card. */

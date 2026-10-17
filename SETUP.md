@@ -163,20 +163,33 @@ the dashboard can show today's events.
 1. In your calendar app, find the option to **share** a calendar as a public
    link (in Proton Calendar this is *Share → Share with anyone → Copy link*).
    The link usually ends in `.ics`.
-2. In **Settings → Daily Dashboard → Today's agenda → Calendar share links**,
-   add one calendar per line like this:
-
-   ```
-   Family | https://...the-link-you-copied...
-   Work | https://...another-link...
-   ```
-
+2. In **Settings → Daily Dashboard → Today's agenda**, click **+ Add calendar**,
+   type a name (like *Family*) in the first box, and paste the link into the
+   second. You can also pick a colour for it.
 3. Your events appear on the dashboard. You can add up to 20 calendars.
 
 > Note: after you change something in your calendar, it can take a few hours to
 > show up here — that's the calendar service's own delay, not the dashboard. If a
 > calendar ever stops updating, the dashboard will tell you in plain words, and
 > you can re-share the calendar to get a fresh link.
+
+## Step 11 — Choose your panels (optional)
+
+Every panel on the dashboard is its own piece — keep what you like and switch
+off the rest.
+
+1. Go to **Settings → Daily Dashboard → Panels**.
+2. Use the switch on each row to show or hide that panel, and the arrows to move
+   it up or down.
+3. A few panels start switched off because they need something extra:
+   - **Contacts** works with the *Simple Contact Manager* add-on.
+   - **Quote of the Day** fills up as you add quotes.
+   - **Daily Brief** needs an API key from an AI service (see the *Daily brief*
+     section at the bottom of the settings). It's completely optional.
+
+**On a phone:** under **Phone tabs**, click **+ Add tab** a few times, give the
+tabs names, then use the tab dropdown on each panel row to put panels where you
+want them.
 
 ---
 

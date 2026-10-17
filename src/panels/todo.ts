@@ -25,6 +25,10 @@ export class TodoPanel extends BasePanel {
 	/** Which rows are expanded to show their sub-tasks / note — survives re-render. */
 	private expanded = new Set<string>();
 
+	constructor(private openWeeklyReview: () => void) {
+		super();
+	}
+
 	protected renderBody(): void {
 		const store = this.ctx.todos;
 		const instances = store.instancesFor();
@@ -36,6 +40,9 @@ export class TodoPanel extends BasePanel {
 		const overdue = active.filter((i) => i.flagged).length;
 		if (overdue > 0) head.createSpan({ cls: "dash-chip dash-chip-warn", text: `${overdue} overdue` });
 		head.createSpan({ cls: "dash-chip", text: `${active.length} to do` });
+		const reviewBtn = head.createEl("button", { cls: "dash-btn dash-btn-sm dash-todo-review", text: "Week in review" });
+		reviewBtn.setAttr("title", "A look back at the last seven days");
+		reviewBtn.addEventListener("click", () => this.openWeeklyReview());
 
 		const addBtn = this.el.createEl("button", { cls: "dash-btn dash-btn-primary dash-todo-add", text: "+ Add a to-do" });
 		addBtn.addEventListener("click", () =>
@@ -258,7 +265,7 @@ const WEEKDAYS: Array<{ v: number; label: string }> = [
 	{ v: 0, label: "Sun" },
 ];
 
-class TodoEditModal extends Modal {
+export class TodoEditModal extends Modal {
 	private text: string;
 	private recType: RecurrenceType;
 	private weeklyDays: Set<number>;
