@@ -13,20 +13,68 @@ you from a fresh install to a working dashboard.
 
 ## Panels
 
-| Panel | What it does |
-| --- | --- |
-| **Clock** | Time of day (12-hour by default, 24-hour optional) with the date. |
-| **Verse of the Day** | One verse of Proverbs, chosen from the date. King James Version (public domain). No commentary. |
-| **To-do** | A persistent to-do list with recurring items and scheduling. Nothing resets overnight; completing a task logs it in today's note. |
-| **Today's Agenda** | Today's events from up to 20 calendar share links (public `.ics` URLs). Scrolls inside a fixed height and jumps to "now". A **Print week** button opens a printable week-at-a-glance planner — events colour-coded by calendar, with ruled space to write in. |
-| **Journal** | Writes into the `# Brain dump`, `# Journal`, and `# Reference tomorrow` sections of today's daily note. Yesterday's "Reference tomorrow" is carried to the top so it greets you today. |
-| **Meals** | Today's planned recipes and grocery list, via the Recipe Manager add-on. Hides itself politely if that add-on isn't installed. |
-| **Search** | Fuzzy search across your chosen folders (filenames and headings), plus make notes, make categories, and file notes under a category. |
-| **Calendar** | A month grid — click a day to open its daily note. A button opens a Bases table of all daily notes, and a search box finds words inside daily-note bodies (ignoring the shared section headings). |
-| **Second Brain** | Your active projects; archive a finished one (links are kept) or start a new one. |
-| **Places** | Shortcut buttons to your favourite notes, folders, and commands. |
+Every panel is a separate module. Turn on only the ones you want in
+**Settings → Daily Dashboard → Panels**, reorder them, and (on the desktop) put
+each in a column with an optional span. Panels that need another plugin explain
+what they need instead of erroring.
 
-Every panel can be turned off or reordered in **Settings → Daily Dashboard**.
+| Panel | What it does | On by default |
+| --- | --- | --- |
+| **Daily Brief** | An AI-written summary of your day, plus an “End the day” recap written into today's note. Needs your own API key (Anthropic or any OpenAI-compatible service); only the categories you allow are sent. | No |
+| **Clock** | Time of day (12-hour by default, 24-hour optional) with the date. | Yes |
+| **Verse of the Day** | One verse of Proverbs, chosen from the date. King James Version (public domain). No commentary. | Yes |
+| **To-do** | A persistent to-do list with recurring items, scheduling, sub-tasks, due dates and notes. Nothing resets overnight; completing a task logs it in today's note. A **Week in review** button looks back over the last seven days. | Yes |
+| **Today's Agenda** | Today's events from up to 20 calendar share links plus your own one-off events. A **Now / Next** strip shows what's happening and how long you're free (each calendar can be left out of it, and given its own colour). **Week's goals** sets goals for the week (each can become a to-do), and **Print week** prints a week-at-a-glance planner with those goals at the top. | Yes |
+| **Journal** | Writes into the `# Brain dump`, `# Journal`, and `# Reference tomorrow` sections of today's daily note. Yesterday's "Reference tomorrow" is carried to the top. | Yes |
+| **Meals** | Today's planned recipes and grocery list, via the Recipe Manager plugin. | Yes |
+| **Shopping** | Shopping lists with quantity, aisle, store and who's paying; filter for a trip, group by aisle, tick things off. Imports a Recipe Manager grocery list in one tap. | Yes |
+| **Quick Actions** | One-tap buttons: add a to-do, event or shopping item, the week's goals, the week in review — plus buttons for Recipe Manager, Simple Contact Manager or the food tracker when those are installed. | Yes |
+| **Contacts** | Who's due or overdue for a catch-up, via the Simple Contact Manager plugin, with a one-tap “Log”. | No |
+| **Quote of the Day** | A quote a day from your own collection of things people have said (add, search, edit in the app). | No |
+| **Search** | Fuzzy search across your chosen folders, plus make notes, make categories, and file notes under a category. | Yes |
+| **Calendar** | A month grid — click a day to open its daily note — plus a Bases table and a search inside daily notes. | Yes |
+| **Second Brain** | Your active projects; archive a finished one or start a new one. | Yes |
+| **Places** | Shortcut buttons to your favourite notes, folders, and commands. | Yes |
+
+### Phone tabs
+
+On a phone the dashboard can be split into tabs (e.g. *Today*, *Home*, *Notes*)
+instead of one long scroll: add tabs in **Settings → Daily Dashboard → Phone
+tabs**, star the one that opens first, and pick a tab for each panel. The desktop
+always shows everything.
+
+### Everything syncs
+
+Your to-dos, local events, panel layout and tabs, shopping lists, quotes, and the
+AI key (if you use one) are kept in small Markdown files under `Daily Dashboard/`,
+so Obsidian Sync carries them to every device and they survive plugin updates.
+
+## Commands and links
+
+Everything is reachable without opening the dashboard — from the command palette,
+a hotkey, or a phone shortcut:
+
+- Open dashboard · Refresh dashboard
+- Add a to-do · Complete the next to-do
+- Write in Brain dump / Journal / Reference tomorrow
+- Add an event to today's agenda · Copy today's agenda into today's note
+- Set this week's goals · Week in review
+- Open the shopping list · Add a shopping item
+- Add a quote · Browse quotes
+- Write today's brief (AI) · End the day (AI)
+- Show to-do list status / Restore the to-do list from this device's backup (troubleshooting)
+
+Links (for iOS/macOS Shortcuts, a desktop launcher, etc.):
+
+```
+obsidian://daily-dash?action=open
+obsidian://daily-dash?action=complete-next
+obsidian://daily-dash?action=add-todo&text=<urlencoded>
+obsidian://daily-dash?action=log&field=braindump|journal|tomorrow&text=<urlencoded>
+obsidian://daily-dash?action=add-event&summary=<urlencoded>&date=YYYY-MM-DD&start=HH:mm&end=HH:mm
+```
+
+Without `text` (or `summary`), each opens the matching window instead.
 
 ## Themes
 

@@ -1,6 +1,7 @@
-import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import type DailyDashPlugin from "./main";
-import { DEFAULT_STREAK } from "dash-core";
+import { DEFAULT_STREAK, computeLayout } from "dash-core";
+import type { DashSettings } from "./settings";
 import { Panel, PanelContext, RefreshReason } from "./panels/types";
 import { createPanels } from "./panels/registry";
 import { friendlyCompanion } from "./companion";
@@ -22,6 +23,9 @@ interface Mounted {
 export class DashView extends ItemView {
 	private mounted: Mounted[] = [];
 	private grid!: HTMLElement;
+	/** The phone tab currently shown. Kept on the view so a refresh never bumps
+	 * you back to the first tab. */
+	private activeTabId: string | null = null;
 
 	constructor(leaf: WorkspaceLeaf, private plugin: DailyDashPlugin) {
 		super(leaf);
@@ -102,16 +106,73 @@ export class DashView extends ItemView {
 
 		this.renderChrome(root);
 
-		this.grid = root.createDiv({ cls: "dash-grid" });
 		const s = this.plugin.settings;
-		const panels = createPanels(s.panelOrder, s.enabledPanels, this.plugin);
+		// Phone-only tabs: a tab bar, and only the active tab's panels.
+		const tabsActive = Platform.isMobile && s.mobileTabs && s.tabs.length > 0;
+		let visible: Set<string> | null = null;
+		if (tabsActive) {
+			if (!this.activeTabId || !s.tabs.some((t) => t.id === this.activeTabId)) this.activeTabId = this.defaultTabId(s);
+			this.renderTabBar(root, s);
+			visible = this.visibleIdsForTab(s, this.activeTabId);
+		}
+
+		this.grid = root.createDiv({ cls: "dash-grid" });
+		let panels = createPanels(s.panelOrder, s.enabledPanels, this.plugin);
+		if (visible) panels = panels.filter((p) => visible!.has(p.id));
 		const ctx = this.ctx();
+
+		// A deliberate desktop grid, if any panel was given a column/span.
+		const layout = computeLayout(s.panelOrder, s.enabledPanels, s.panelColumns, s.panelSpans);
+		const placeById = new Map(layout.placements.map((p) => [p.id, p]));
+		if (layout.configured) {
+			this.grid.addClass("dash-grid-cols");
+			this.grid.style.setProperty("--dash-cols", String(layout.columns));
+		}
 
 		for (const panel of panels) {
 			const host = this.grid.createDiv({ cls: "dash-panel" });
 			host.dataset.panel = panel.id;
+			const place = layout.configured ? placeById.get(panel.id) : undefined;
+			if (place) host.style.gridColumn = `${place.column} / span ${place.span}`;
 			this.mounted.push({ panel, host });
 			await this.mountPanel(panel, host, ctx);
+		}
+
+		if (visible && panels.length === 0) {
+			this.grid.createDiv({ cls: "dash-empty dash-tab-empty", text: "Nothing on this tab yet — choose a tab for some panels in the plugin settings." });
+		}
+		// A real spacer so the last card clears the phone's floating toolbar.
+		root.createDiv({ cls: "dash-scroll-spacer" });
+	}
+
+	private defaultTabId(s: DashSettings): string {
+		if (s.defaultTabId && s.tabs.some((t) => t.id === s.defaultTabId)) return s.defaultTabId;
+		return s.tabs[0].id;
+	}
+
+	/** Enabled panels on a tab. Unassigned panels go to the default tab, so no
+	 * panel is ever hidden from every tab. */
+	private visibleIdsForTab(s: DashSettings, tabId: string): Set<string> {
+		const def = this.defaultTabId(s);
+		const set = new Set<string>();
+		for (const id of s.panelOrder) {
+			if (s.enabledPanels[id] === false) continue;
+			const a = s.tabAssignments[id];
+			if ((a && s.tabs.some((t) => t.id === a) ? a : def) === tabId) set.add(id);
+		}
+		return set;
+	}
+
+	private renderTabBar(root: HTMLElement, s: DashSettings): void {
+		const bar = root.createDiv({ cls: "dash-tabbar" });
+		for (const tab of s.tabs) {
+			const b = bar.createEl("button", { cls: "dash-tab", text: tab.name || "Tab" });
+			b.toggleClass("is-active", tab.id === this.activeTabId);
+			b.addEventListener("click", () => {
+				if (this.activeTabId === tab.id) return;
+				this.activeTabId = tab.id;
+				void this.build();
+			});
 		}
 	}
 

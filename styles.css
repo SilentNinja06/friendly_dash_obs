@@ -470,6 +470,8 @@
 .dash-journal { display: flex; flex-direction: column; gap: 12px; }
 .dash-journal-label { font-weight: 600; font-size: 0.82em; color: var(--dash-text-muted); margin-bottom: 4px; }
 .dash-journal-input {
+	box-sizing: border-box;
+	max-width: 100%;
 	width: 100%;
 	resize: none;
 	background: var(--dash-surface-alt);
@@ -611,3 +613,274 @@
 	}
 	.dash-settings-cal-list .setting-item-control { justify-content: flex-start; }
 }
+
+/* =====================================================================
+ * 0.6 modules: layout (phone tabs, desktop grid), agenda countdown, weekly
+ * goals/review, shopping, quotes, contacts, quick actions, daily brief.
+ * ===================================================================== */
+
+/* Windows that open outside the dashboard (modals) and the settings pane don't
+ * sit under `.dash-root`, so give them the token contract mapped onto the
+ * user's own Obsidian theme. */
+.modal-container,
+.vertical-tab-content {
+	--dash-bg: var(--background-primary);
+	--dash-surface: var(--background-primary);
+	--dash-surface-alt: var(--background-secondary);
+	--dash-text: var(--text-normal);
+	--dash-text-muted: var(--text-muted);
+	--dash-border: var(--background-modifier-border);
+	--dash-accent: var(--interactive-accent);
+	--dash-accent-3: var(--text-accent);
+	--dash-on-accent: var(--text-on-accent);
+	--dash-warning: var(--text-warning);
+	--dash-danger: var(--text-error);
+	--dash-radius: var(--radius-s, 4px);
+	--dash-rule-weight: 1px;
+	--dash-font-body: inherit;
+}
+
+/* ------------------------------------------------------- layout */
+
+.dash-scroll-spacer { height: 0; }
+.is-mobile .dash-scroll-spacer { height: calc(96px + env(safe-area-inset-bottom, 0px)); }
+
+.dash-tabbar {
+	display: flex;
+	gap: 6px;
+	overflow-x: auto;
+	scrollbar-width: none;
+	padding: 6px 0 10px;
+	margin-bottom: 8px;
+	position: sticky;
+	top: -16px;
+	z-index: 5;
+	background: var(--dash-bg);
+}
+.dash-tabbar::-webkit-scrollbar { display: none; }
+.dash-tab {
+	flex: 0 0 auto;
+	padding: 6px 14px;
+	border-radius: 999px;
+	border: var(--dash-rule-weight) solid var(--dash-border);
+	background: var(--dash-surface);
+	color: var(--dash-text);
+	font-family: var(--dash-font-body);
+	font-size: 0.85em;
+	white-space: nowrap;
+	cursor: pointer;
+	box-shadow: none;
+}
+.dash-tab.is-active { background: var(--dash-accent); border-color: var(--dash-accent); color: var(--dash-on-accent); }
+.dash-tab-empty { text-align: center; padding: 24px 8px; }
+
+/* A deliberate column grid — only when a panel was given a column/span. Below
+ * the phone breakpoint it carries no grid rules, so panels stack as usual. */
+@media (min-width: 700px) {
+	.dash-grid.dash-grid-cols {
+		display: grid;
+		grid-template-columns: repeat(var(--dash-cols, 1), minmax(0, 1fr));
+		grid-auto-flow: row dense;
+		align-items: start;
+		gap: 14px;
+	}
+	.dash-grid.dash-grid-cols .dash-panel { margin-bottom: 0; break-inside: auto; }
+}
+
+.dash-settings-tab-list { margin-bottom: 8px; }
+
+/* ------------------------------------------------------- agenda countdown */
+
+.dash-agenda-next {
+	border: var(--dash-rule-weight) solid var(--dash-border);
+	border-left: 4px solid var(--dash-accent);
+	border-radius: var(--dash-radius);
+	background: var(--dash-surface-alt);
+	padding: 8px 10px;
+	margin-bottom: 8px;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.dash-agenda-next.is-now { border-left-color: var(--dash-warning); }
+.dash-agenda-next.is-clear { border-left-color: var(--dash-accent-2, var(--dash-accent)); }
+.dash-agenda-next-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.dash-agenda-next-label { font-weight: 700; font-size: 0.78em; color: var(--dash-accent); text-transform: uppercase; letter-spacing: 0.05em; }
+.dash-agenda-next.is-now .dash-agenda-next-label { color: var(--dash-warning); }
+.dash-agenda-next-summary { flex: 1; min-width: 0; word-break: break-word; font-weight: 600; }
+.dash-agenda-next-when { font-size: 0.85em; color: var(--dash-text-muted); font-variant-numeric: tabular-nums; }
+.dash-agenda-gap { font-size: 0.82em; color: var(--dash-text-muted); }
+.dash-agenda-toolbar { flex-wrap: wrap; }
+
+/* ------------------------------------------------------- to-do review button */
+
+.dash-placard .dash-todo-review { margin-left: 6px; }
+
+/* ------------------------------------------------------- weekly goals + review */
+
+.dash-goals-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.dash-goals-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	border: var(--dash-rule-weight) solid var(--dash-border);
+	border-radius: var(--dash-radius);
+	background: var(--dash-surface-alt);
+}
+.dash-goals-text { flex: 1; min-width: 0; word-break: break-word; }
+.dash-goals-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+
+.dash-review { display: flex; flex-direction: column; gap: 14px; }
+.dash-review-header { color: var(--dash-text-muted); padding-bottom: 8px; border-bottom: var(--dash-rule-weight) solid var(--dash-border); }
+.dash-review-streak { color: var(--dash-accent); font-size: 0.9em; }
+.dash-review-block { display: flex; flex-direction: column; gap: 6px; }
+.dash-review-stat-head { font-weight: 600; font-size: 0.85em; color: var(--dash-text-muted); }
+.dash-review-figure { font-size: 1.8em; font-weight: 700; color: var(--dash-accent); line-height: 1; }
+.dash-review-line { font-size: 0.95em; }
+.dash-review-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.dash-review-bars { display: flex; gap: 6px; align-items: flex-end; }
+.dash-review-bar-cell { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.dash-review-bar-track {
+	width: 100%;
+	height: 48px;
+	display: flex;
+	align-items: flex-end;
+	background: var(--dash-surface-alt);
+	border-radius: var(--dash-radius);
+	overflow: hidden;
+}
+.dash-review-bar-fill { width: 100%; background: var(--dash-accent); min-height: 2px; }
+.dash-review-bar-fill.is-empty { background: var(--dash-border); }
+.dash-review-bar-day, .dash-review-bar-count { font-size: 0.75em; color: var(--dash-text-muted); font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------- shared card tools */
+
+.dash-placard .dash-qotd-tools { margin-left: auto; display: flex; gap: 4px; }
+.dash-placard .dash-qotd-add {
+	min-width: 30px;
+	height: 30px;
+	border: var(--dash-rule-weight) solid var(--dash-border);
+	border-radius: var(--dash-radius);
+	background: var(--dash-surface-alt);
+	color: var(--dash-text);
+	cursor: pointer;
+	line-height: 1;
+	box-shadow: none;
+}
+.dash-placard .dash-qotd-add:hover { border-color: var(--dash-accent); }
+.dash-qotd-addbig {
+	margin-top: 10px;
+	padding: 7px 14px;
+	border: var(--dash-rule-weight) solid var(--dash-border);
+	border-radius: var(--dash-radius);
+	background: var(--dash-surface-alt);
+	color: var(--dash-text);
+	font-family: var(--dash-font-body);
+	font-size: 0.85em;
+	cursor: pointer;
+}
+.dash-qotd-addbig:hover { border-color: var(--dash-accent); }
+
+/* ------------------------------------------------------- quote of the day */
+
+.dash-qotd { position: relative; padding: 4px 4px 2px 30px; }
+.dash-qotd-mark { position: absolute; left: 0; top: -8px; font-size: 2.6em; line-height: 1; color: var(--dash-accent); opacity: 0.6; font-family: Georgia, serif; }
+.dash-qotd-text { font-size: 1.05em; line-height: 1.5; }
+.dash-qotd-author { margin-top: 8px; color: var(--dash-text-muted); font-size: 0.88em; }
+
+/* ------------------------------------------------------- shopping card */
+
+.shopping-card-lists { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.shopping-card-chip {
+	padding: 3px 10px;
+	border: var(--dash-rule-weight) solid var(--dash-border);
+	border-radius: 999px;
+	background: var(--dash-surface-alt);
+	color: var(--dash-text);
+	font-size: 0.8em;
+	cursor: pointer;
+	box-shadow: none;
+}
+.shopping-card-chip:hover { border-color: var(--dash-accent); }
+.shopping-card-section { font-weight: 600; font-size: 0.8em; color: var(--dash-text-muted); margin: 8px 0 2px; }
+.shopping-card-item { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.shopping-card-item-text { flex: 1; }
+.shopping-card-foot { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.shopping-card-foot .dash-qotd-addbig { margin-top: 0; margin-left: auto; }
+
+/* ------------------------------------------------------- sheet modals */
+
+.dash-sheet-mobile { align-self: flex-end; width: 100%; max-width: 100%; border-radius: 14px 14px 0 0; }
+.dash-sheet-body { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.dash-sheet .dash-empty { color: var(--text-muted); }
+
+.shopping-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.shopping-select { flex: 1 1 120px; min-height: 36px; }
+.shopping-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.shopping-filter { display: flex; align-items: center; gap: 4px; }
+.shopping-filter-label { font-size: 0.8em; color: var(--text-muted); }
+.shopping-group-toggle { display: flex; gap: 4px; margin-left: auto; }
+.shopping-grp.is-on { border-color: var(--interactive-accent); color: var(--text-accent); }
+.shopping-list { display: flex; flex-direction: column; gap: 2px; max-height: 55vh; overflow-y: auto; }
+.shopping-section { font-weight: 600; font-size: 0.82em; color: var(--text-muted); margin: 10px 0 2px; border-bottom: 1px solid var(--background-modifier-border); padding-bottom: 2px; }
+.shopping-item { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+.shopping-item.is-checked .shopping-item-name { text-decoration: line-through; color: var(--text-faint); }
+.shopping-item-main { flex: 1; min-width: 0; }
+.shopping-item-qty { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.shopping-item-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.shopping-item-note { font-size: 0.8em; color: var(--text-faint); font-style: italic; }
+.shopping-item-actions { display: flex; gap: 2px; flex: none; }
+.shopping-icon { min-width: 30px; height: 30px; border: none; background: transparent; box-shadow: none; color: var(--text-muted); cursor: pointer; }
+.shopping-icon:hover { background: var(--background-modifier-hover); }
+.shopping-footer { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--background-modifier-border); }
+.shopping-status { font-size: 0.9em; margin-bottom: 8px; }
+.shopping-payers { color: var(--text-muted); }
+.shopping-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.shopping-actions .dash-btn { flex: 1 1 auto; }
+.shopping-amount-row { display: flex; gap: 8px; }
+.shopping-amount-row > .setting-item { flex: 1; border: none; padding: 8px 0; }
+.shopping-edit-buttons, .quote-edit-buttons { margin-top: 12px; }
+.shopping-edit-buttons .dash-btn, .quote-edit-buttons .dash-btn { width: 100%; }
+
+.quote-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+.quote-search { flex: 1 1 160px; min-height: 36px; }
+.quote-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.quote-count { font-size: 0.8em; color: var(--text-muted); }
+.quote-item { border: 1px solid var(--background-modifier-border); border-radius: var(--radius-s, 4px); padding: 10px 12px; background: var(--background-secondary); }
+.quote-item-meta { margin-top: 3px; font-size: 0.85em; color: var(--text-muted); }
+.quote-item-actions { display: flex; gap: 6px; margin-top: 8px; }
+.quote-item-actions button { flex: 1 1 auto; }
+.dash-btn.quote-danger { color: var(--text-error); border-color: var(--text-error); background: transparent; }
+
+/* ------------------------------------------------------- contacts */
+
+.dash-crm-list { display: flex; flex-direction: column; gap: 2px; }
+.dash-crm-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 7px 4px;
+	border-bottom: var(--dash-rule-weight) solid var(--dash-border);
+}
+.dash-crm-row:last-child { border-bottom: none; }
+.dash-crm-row.is-overdue { background: color-mix(in srgb, var(--dash-warning) 10%, transparent); }
+.dash-crm-main { flex: 1; min-width: 0; }
+.dash-crm-name { color: var(--dash-text); font-weight: 600; text-decoration: none; cursor: pointer; }
+.dash-crm-name:hover { color: var(--dash-accent); text-decoration: underline; }
+.dash-crm-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 3px; }
+
+/* ------------------------------------------------------- quick actions */
+
+.dash-actions-group { margin-top: 6px; }
+.dash-actions-group .dash-btn-row { margin-top: 4px; }
+
+/* ------------------------------------------------------- daily brief */
+
+.dash-brief { line-height: 1.55; }
+.dash-brief p { margin: 0.35em 0; }
+.dash-brief ul { margin: 0.35em 0; padding-left: 1.2em; }
+.dash-brief li { margin: 0.15em 0; }
+.dash-brief h1, .dash-brief h2, .dash-brief h3 { font-size: 1em; margin: 0.6em 0 0.2em; }
+.dash-brief-foot { margin-top: 12px; display: flex; justify-content: flex-end; }
+.dash-brief-endday:disabled { opacity: 0.6; cursor: default; }
