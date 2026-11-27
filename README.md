@@ -49,8 +49,8 @@ nothing they read leaves your device. Install them with
 | **Music** — songs in progress | Music (`SilentNinja06/music.obs`) |
 | **Wardrobe** — laundry and today's outfit | Wardrobe (`SilentNinja06/outfit_obs`) |
 | **Food log** — today's log and quick buttons | ARFID Tracker (`SilentNinja06/ARFID_obs`) |
-| **Commons** — notes for whoever's next | Commons (not public yet) |
-| **Budget** — a quick way into your budget | Treasury (not public yet) |
+| **Commons** — notes for whoever's next | Commons (`SilentNinja06/commons`) |
+| **Budget** — a quick way into your budget | Treasury (`SilentNinja06/treasury_obs`) |
 
 **Privacy check.** Before any dashboard release, an automatic check scans this
 plugin and the latest release of every companion above for personal details

@@ -50,8 +50,12 @@ const termRes = terms.map((t) => new RegExp(`(?<![A-Za-z0-9])${escapeRe(t)}(?![A
 const findings = [];
 const notes = [];
 
+/** Stable across releases: the repo (not its version), the file, the kind of
+ * finding and the matched text. Approving a false positive once keeps it
+ * approved in later releases of that plugin. */
 function fingerprint(target, file, kind, match) {
-	return createHash("sha256").update(`${target}|${file}|${kind}|${match.toLowerCase()}`).digest("hex").slice(0, 16);
+	const repo = target.replace(/@.*$/, "");
+	return createHash("sha256").update(`${repo}|${file}|${kind}|${match.toLowerCase()}`).digest("hex").slice(0, 16);
 }
 
 function report(target, file, line, kind, match, label) {
@@ -66,7 +70,7 @@ function scanText(target, file, text) {
 		const n = i + 1;
 		termRes.forEach((re, k) => {
 			const m = re.exec(ln);
-			if (m) report(target, file, n, `term${k}`, m[0], `private term #${k + 1}`);
+			if (m) report(target, file, n, "term", m[0], `private term #${k + 1}`);
 		});
 		for (const m of ln.matchAll(EMAIL)) {
 			if (!EMAIL_OK.test(m[0])) report(target, file, n, "email", m[0], "email address");
