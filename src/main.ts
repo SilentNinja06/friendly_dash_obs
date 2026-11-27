@@ -27,7 +27,7 @@ import {
 } from "dash-core";
 import { DashRuntime, RefreshReason } from "./panels/types";
 import { DashView, VIEW_TYPE_DASH } from "./view";
-import { PANEL_ORDER } from "./panels/registry";
+import { PANEL_SUCCESSORS, PANEL_ORDER } from "./panels/registry";
 import { TodoEditModal } from "./panels/todo";
 import { JOURNAL_FIELDS, JournalField, isJournalField } from "./core/journalfields";
 import { friendlyLocalEvents, friendlyWeeklyGoals, FRIENDLY_WEEKLYGOALS_COPY } from "./adapters";
@@ -445,6 +445,9 @@ export default class DailyDashPlugin extends Plugin {
 	 * at the very bottom), once. Their on/off state comes from the defaults. */
 	private placeNewPanels(): void {
 		const known = new Set(this.data.knownPanels ?? []);
+		// A panel that replaced an older one (verse/quote → words) is already placed
+		// where its predecessor was; don't move it.
+		for (const [old, next] of Object.entries(PANEL_SUCCESSORS)) if (known.has(old)) known.add(next);
 		const order = this.settings.panelOrder;
 		for (const id of PANEL_ORDER) {
 			if (known.has(id)) continue;

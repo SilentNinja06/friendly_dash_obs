@@ -2,7 +2,11 @@ import { App, PluginSettingTab, Setting } from "obsidian";
 import type DailyDashPlugin from "./main";
 import { TodoItem } from "dash-core";
 import type { DashLayout } from "dash-core";
-import { DEFAULT_OFF, PANEL_DESCRIPTIONS, PANEL_ORDER, PANEL_TITLES } from "./panels/registry";
+import { COMPANION_PANELS, DEFAULT_OFF, PANEL_DESCRIPTIONS, PANEL_ORDER, PANEL_TITLES, RETIRED_PANELS } from "./panels/registry";
+import { migrateDailyWords, remapPanelIds } from "./core/panelmigrate";
+import { DAILY_WORDS_LABELS, type DailyWords } from "./panels/words";
+import { COMPANION_BY_PANEL, companionEnabled } from "./companions/registry";
+import { SUPPORT_LINKS } from "./support";
 import { THEMES, DEFAULT_THEME, isThemeId } from "./core/themes";
 
 export interface CalendarLink {
@@ -54,6 +58,8 @@ export interface DashSettings {
 	/** Markdown file the layout (tabs, order, columns) is mirrored to, so it syncs
 	 * across devices and survives plugin updates. Authoritative on load. */
 	layoutPath: string;
+	/** What the "Daily words" panel shows. */
+	dailyWords: DailyWords;
 	/** Clock: false = 12-hour with a separator (2:32 PM); true = 24-hour. */
 	clock24h: boolean;
 	agendaRefreshMinutes: number;
@@ -154,6 +160,7 @@ export const DEFAULT_SETTINGS: DashSettings = {
 	tabAssignments: {},
 	defaultTabId: null,
 	layoutPath: "Daily Dashboard/Dashboard Layout.md",
+	dailyWords: "quote",
 	clock24h: false,
 	agendaRefreshMinutes: 30,
 	agendaHeight: 320,
@@ -203,14 +210,22 @@ function normalizePlace(p: PlaceLink): PlaceLink {
 	return { ...p };
 }
 
-export function mergeSettings(loaded: Partial<DashSettings> | undefined): DashSettings {
+export function mergeSettings(loaded0: Partial<DashSettings> | undefined): DashSettings {
+	// Settle daily words from the OLD panel switches, then remap retired panel ids
+	// (verse/quote → words) BEFORE anything filters unknown ones, so positions,
+	// tabs and columns carry over instead of vanishing.
+	const dailyWords = migrateDailyWords(loaded0);
+	const loaded = loaded0 ? remapPanelIds(loaded0) : loaded0;
 	const s: DashSettings = { ...DEFAULT_SETTINGS, ...(loaded ?? {}) };
+	s.dailyWords = dailyWords;
 	if (!isThemeId(s.theme)) s.theme = DEFAULT_THEME;
 	// Keep panel order/enable maps whole even as panels are added in future versions.
 	const order = (loaded?.panelOrder ?? []).filter((id) => PANEL_ORDER.includes(id));
 	for (const id of PANEL_ORDER) if (!order.includes(id)) order.push(id);
 	s.panelOrder = order;
 	s.enabledPanels = { ...DEFAULT_SETTINGS.enabledPanels, ...(loaded?.enabledPanels ?? {}) };
+	// Upgrading with Verse or Quote on: keep the (merged) Daily words panel on.
+	if (loaded0 && !("dailyWords" in loaded0) && dailyWords !== "none") s.enabledPanels.words = true;
 	s.panelColumns = pickKnown(loaded?.panelColumns);
 	s.panelSpans = pickKnown(loaded?.panelSpans);
 	// Don't share default array/object instances.
@@ -267,7 +282,9 @@ export function layoutFromSettings(s: DashSettings): DashLayout {
 /** Apply a layout loaded from the synced file onto live settings, re-validating
  * against the current panel set so a file from another version can't corrupt
  * it. Only fields present in the layout are touched. */
-export function applyLayout(s: DashSettings, layout: DashLayout): DashSettings {
+export function applyLayout(s: DashSettings, layout0: DashLayout): DashSettings {
+	// A layout file written by an older version may still name retired panels.
+	const layout = remapPanelIds(layout0);
 	if (typeof layout.mobileTabs === "boolean") s.mobileTabs = layout.mobileTabs;
 	applyTabs(
 		s,
@@ -353,6 +370,17 @@ export class DashSettingTab extends PluginSettingTab {
 				})
 			);
 
+		new Setting(containerEl)
+			.setName("Daily words")
+			.setDesc("What the Daily words panel shows each day. Your quote collection is kept whichever you pick.")
+			.addDropdown((dd) => {
+				for (const [k, label] of Object.entries(DAILY_WORDS_LABELS)) dd.addOption(k, label);
+				dd.setValue(s.dailyWords).onChange(async (v) => {
+					s.dailyWords = (v in DAILY_WORDS_LABELS ? v : "quote") as DailyWords;
+					await this.save();
+				});
+			});
+
 		// -------- panels: enable + reorder + desktop grid + mobile tab --------
 		new Setting(containerEl)
 			.setName("Panels")
@@ -365,7 +393,13 @@ export class DashSettingTab extends PluginSettingTab {
 		const renderList = () => {
 			list.empty();
 			s.panelOrder.forEach((id, index) => {
-				const row = new Setting(list).setName(PANEL_TITLES[id] ?? id).setDesc(PANEL_DESCRIPTIONS[id] ?? "");
+				// Retired modules are listed only while they're still switched on.
+				if (RETIRED_PANELS.includes(id) && s.enabledPanels[id] === false) return;
+				const companion = COMPANION_BY_PANEL.get(id);
+				const desc = companion
+					? `${companion.blurb} ${companionEnabled(this.app, companion.pluginId) ? "Shown — " + companion.name + " is installed." : "Hidden until " + companion.name + " is installed."}`
+					: PANEL_DESCRIPTIONS[id] ?? "";
+				const row = new Setting(list).setName(PANEL_TITLES[id] ?? id).setDesc(desc);
 				row.addExtraButton((b) =>
 					b
 						.setIcon("arrow-up")
@@ -418,11 +452,38 @@ export class DashSettingTab extends PluginSettingTab {
 					t.setValue(s.enabledPanels[id] !== false).onChange(async (v) => {
 						s.enabledPanels[id] = v;
 						await this.saveLayout();
+						if (RETIRED_PANELS.includes(id) && !v) renderList();
 					})
 				);
 			});
 		};
 		renderList();
+
+		// -------- companion plugins --------
+		new Setting(containerEl)
+			.setName("Companion plugins")
+			.setDesc(
+				"Separate plugins that add a card to the dashboard. A card only appears while its plugin is installed and turned on. Cards only read; anything that changes data happens in the plugin itself. Install them with BRAT using the repository names below. Every companion is checked for personal details before each dashboard release."
+			)
+			.setHeading();
+		for (const id of COMPANION_PANELS) {
+			const c = COMPANION_BY_PANEL.get(id);
+			if (!c) continue;
+			const on = companionEnabled(this.app, c.pluginId);
+			new Setting(containerEl).setName(`${on ? "✓ " : ""}${c.name}`).setDesc(`${c.blurb} BRAT: ${c.repo}`);
+		}
+
+		// -------- support & updates --------
+		new Setting(containerEl)
+			.setName("Support & updates")
+			.setDesc("This dashboard is a one-person project. Announcements, help, and a way to say thanks:")
+			.setHeading();
+		for (const l of SUPPORT_LINKS) {
+			new Setting(containerEl)
+				.setName(l.label)
+				.setDesc(l.blurb)
+				.addButton((b) => b.setButtonText(l.cta).onClick(() => window.open(l.url)));
+		}
 
 		// -------- mobile tabs --------
 		new Setting(containerEl)
