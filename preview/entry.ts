@@ -63,6 +63,7 @@ const plugin = new DailyDashPlugin(app, { id: "daily-dash", version: "dev" });
 	await plugin.onload();
 	if (params.get("theme")) plugin.settings.theme = params.get("theme");
 	if (params.get("words")) plugin.settings.dailyWords = params.get("words");
+	if (params.get("tabs")) { plugin.settings.tabs = [{ id: "t1", name: "Today" }, { id: "t2", name: "Notes" }]; plugin.settings.tabAssignments = { search: "t2", secondbrain: "t2", calendar: "t2" }; plugin.settings.desktopTabs = true; plugin.settings.defaultTabId = "t1"; }
 	const leaf = { app };
 	const view = new DashView(leaf, plugin);
 	document.body.className = "theme-" + (params.get("mode") ?? "dark");

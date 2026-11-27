@@ -50,6 +50,9 @@ export interface DashSettings {
 	/** Mobile-only tabbed layout: when on AND at least one tab exists, the phone
 	 * shows a tab bar and only the active tab's panels. Desktop is unaffected. */
 	mobileTabs: boolean;
+	/** Desktop tabbed layout (the same tabs as the phone). Kept in this device's
+	 * settings, not the synced layout file. Off by default. */
+	desktopTabs: boolean;
 	tabs: DashTab[];
 	/** panelId → tabId. Unassigned panels fall into the default tab. */
 	tabAssignments: Record<string, string>;
@@ -156,6 +159,7 @@ export const DEFAULT_SETTINGS: DashSettings = {
 	panelColumns: {},
 	panelSpans: {},
 	mobileTabs: true,
+	desktopTabs: false,
 	tabs: [],
 	tabAssignments: {},
 	defaultTabId: null,
@@ -487,9 +491,9 @@ export class DashSettingTab extends PluginSettingTab {
 
 		// -------- mobile tabs --------
 		new Setting(containerEl)
-			.setName("Phone tabs")
+			.setName("Tabs")
 			.setDesc(
-				"On a phone, group panels into tabs instead of one long scroll (the desktop always shows everything). Add tabs here, star the one that opens first, then pick a tab for each panel in the list above — panels without a tab go to the starred one."
+				"Group panels into tabs instead of one long page. The same tabs are used on a phone and on the desktop, and each has its own switch. Add tabs here, star the one that opens first, then pick a tab for each panel in the list above — panels without a tab go to the starred one."
 			)
 			.setHeading();
 
@@ -499,6 +503,16 @@ export class DashSettingTab extends PluginSettingTab {
 			.addToggle((t) =>
 				t.setValue(s.mobileTabs).onChange(async (v) => {
 					s.mobileTabs = v;
+					await this.saveLayout();
+				})
+			);
+
+		new Setting(containerEl)
+			.setName("Use tabs on the desktop")
+			.setDesc("When on and at least one tab exists, the desktop dashboard shows the same tab bar. Off: the desktop shows every panel at once.")
+			.addToggle((t) =>
+				t.setValue(s.desktopTabs).onChange(async (v) => {
+					s.desktopTabs = v;
 					await this.saveLayout();
 				})
 			);

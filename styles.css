@@ -1123,3 +1123,14 @@
 	background-image: none;
 	box-shadow: none;
 }
+
+/* Tabs on the desktop line up with the grid; sleek labels like the cards. */
+.dash-tabbar { max-width: 1600px; margin-left: auto; margin-right: auto; }
+.dash-root .dash-tab {
+	font-family: var(--dash-font-mono, monospace);
+	font-size: 0.7em;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	padding: 7px 14px;
+	background-image: none;
+}

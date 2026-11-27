@@ -107,8 +107,8 @@ export class DashView extends ItemView {
 		this.renderChrome(root);
 
 		const s = this.plugin.settings;
-		// Phone-only tabs: a tab bar, and only the active tab's panels.
-		const tabsActive = Platform.isMobile && s.mobileTabs && s.tabs.length > 0;
+		// Tabs: the same tab list on phone and desktop, each with its own switch.
+		const tabsActive = s.tabs.length > 0 && (Platform.isMobile ? s.mobileTabs : s.desktopTabs);
 		let visible: Set<string> | null = null;
 		if (tabsActive) {
 			if (!this.activeTabId || !s.tabs.some((t) => t.id === this.activeTabId)) this.activeTabId = this.defaultTabId(s);
@@ -122,7 +122,9 @@ export class DashView extends ItemView {
 		const ctx = this.ctx();
 
 		// A deliberate desktop grid, if any panel was given a column/span.
-		const layout = computeLayout(s.panelOrder, s.enabledPanels, s.panelColumns, s.panelSpans);
+		// With tabs on, lay out only this tab's panels, so a tab has no empty columns.
+		const enabledHere = visible ? Object.fromEntries(s.panelOrder.map((id) => [id, s.enabledPanels[id] !== false && visible!.has(id)])) : s.enabledPanels;
+		const layout = computeLayout(s.panelOrder, enabledHere, s.panelColumns, s.panelSpans);
 		const placeById = new Map(layout.placements.map((p) => [p.id, p]));
 		if (layout.configured) {
 			this.grid.addClass("dash-grid-cols");

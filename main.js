@@ -6877,6 +6877,7 @@ var DEFAULT_SETTINGS = {
   panelColumns: {},
   panelSpans: {},
   mobileTabs: true,
+  desktopTabs: false,
   tabs: [],
   tabAssignments: {},
   defaultTabId: null,
@@ -7131,12 +7132,18 @@ var DashSettingTab = class extends import_obsidian41.PluginSettingTab {
     for (const l of SUPPORT_LINKS) {
       new import_obsidian41.Setting(containerEl).setName(l.label).setDesc(l.blurb).addButton((b) => b.setButtonText(l.cta).onClick(() => window.open(l.url)));
     }
-    new import_obsidian41.Setting(containerEl).setName("Phone tabs").setDesc(
-      "On a phone, group panels into tabs instead of one long scroll (the desktop always shows everything). Add tabs here, star the one that opens first, then pick a tab for each panel in the list above \u2014 panels without a tab go to the starred one."
+    new import_obsidian41.Setting(containerEl).setName("Tabs").setDesc(
+      "Group panels into tabs instead of one long page. The same tabs are used on a phone and on the desktop, and each has its own switch. Add tabs here, star the one that opens first, then pick a tab for each panel in the list above \u2014 panels without a tab go to the starred one."
     ).setHeading();
     new import_obsidian41.Setting(containerEl).setName("Use tabs on a phone").setDesc("When on and at least one tab exists, the phone dashboard shows a tab bar.").addToggle(
       (t) => t.setValue(s.mobileTabs).onChange(async (v) => {
         s.mobileTabs = v;
+        await this.saveLayout();
+      })
+    );
+    new import_obsidian41.Setting(containerEl).setName("Use tabs on the desktop").setDesc("When on and at least one tab exists, the desktop dashboard shows the same tab bar. Off: the desktop shows every panel at once.").addToggle(
+      (t) => t.setValue(s.desktopTabs).onChange(async (v) => {
+        s.desktopTabs = v;
         await this.saveLayout();
       })
     );
@@ -7822,7 +7829,7 @@ var DashView = class extends import_obsidian43.ItemView {
     root.dataset.theme = this.plugin.settings.theme;
     this.renderChrome(root);
     const s = this.plugin.settings;
-    const tabsActive = import_obsidian43.Platform.isMobile && s.mobileTabs && s.tabs.length > 0;
+    const tabsActive = s.tabs.length > 0 && (import_obsidian43.Platform.isMobile ? s.mobileTabs : s.desktopTabs);
     let visible = null;
     if (tabsActive) {
       if (!this.activeTabId || !s.tabs.some((t) => t.id === this.activeTabId)) this.activeTabId = this.defaultTabId(s);
@@ -7833,7 +7840,8 @@ var DashView = class extends import_obsidian43.ItemView {
     let panels = createPanels(s.panelOrder, s.enabledPanels, this.plugin);
     if (visible) panels = panels.filter((p) => visible.has(p.id));
     const ctx = this.ctx();
-    const layout = computeLayout(s.panelOrder, s.enabledPanels, s.panelColumns, s.panelSpans);
+    const enabledHere = visible ? Object.fromEntries(s.panelOrder.map((id) => [id, s.enabledPanels[id] !== false && visible.has(id)])) : s.enabledPanels;
+    const layout = computeLayout(s.panelOrder, enabledHere, s.panelColumns, s.panelSpans);
     const placeById = new Map(layout.placements.map((p) => [p.id, p]));
     if (layout.configured) {
       this.grid.addClass("dash-grid-cols");
