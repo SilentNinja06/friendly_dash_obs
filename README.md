@@ -20,6 +20,7 @@ each in a column with an optional span.
 
 | Panel | What it does |
 | --- | --- |
+| **Daily Brief** *(off by default)* | An AI-written summary of your day, plus an “End the day” recap written into today's note. Turn it on in settings and add your own API key (Anthropic or any OpenAI-compatible service); only the categories you allow are sent. |
 | **Clock** | Time of day (12-hour by default, 24-hour optional) with the date. |
 | **Daily words** | Your choice under **Daily words**: a **Quote of the day** from your own collection (the default), a **Verse of the day** (one verse of Proverbs, KJV, public domain), or nothing. |
 | **To-do** | A persistent to-do list with recurring items, scheduling, sub-tasks, due dates and notes. Nothing resets overnight; completing a task logs it in today's note. **Week in review** looks back over the last seven days. |
@@ -63,9 +64,10 @@ Nothing is deleted, and nothing you were using disappears:
 - **Verse of the Day** and **Quote of the Day** became one **Daily words** panel,
   in the Verse panel's old spot. It keeps showing whichever you had on (the quote
   if you had both). Change it any time under **Daily words**.
-- **Daily Brief** and **Places** are no longer offered to new installs. If you
-  have them on, they keep working and stay in the panel list until you switch them
-  off. Your shortcuts and your AI key file stay where they are.
+- **Daily Brief** works as before and still starts switched off; turn it on and
+  add your key in settings.
+- **Places** is no longer offered to new installs. If you have it on, it keeps
+  working and stays in the panel list until you switch it off. Your shortcuts stay.
 - **Meals** and **Contacts** are now companion cards: they show only when Recipe
   Manager / Simple Contact Manager are installed.
 - New look: a new default theme, **Midnight**, and a quieter frame for every

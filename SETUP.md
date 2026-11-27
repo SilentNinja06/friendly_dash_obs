@@ -183,7 +183,10 @@ off the rest.
    it up or down.
 3. **Daily words** shows a quote from your own collection each day. Pick a
    Bible verse (Proverbs) or nothing instead under **Daily words**.
-4. Cards for companion plugins (Flights, Meals, Contacts, Meditation, Music,
+4. **Daily Brief** (an AI summary of your day) starts switched off. To use it,
+   switch it on and add an API key in the *Daily brief* section at the bottom
+   of the settings. It's completely optional.
+5. Cards for companion plugins (Flights, Meals, Contacts, Meditation, Music,
    Wardrobe, Food log…) appear by themselves once you install that plugin.
    **Settings → Companion plugins** lists them with where to get each one.
 

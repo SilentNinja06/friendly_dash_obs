@@ -6684,9 +6684,9 @@ function migrateDailyWords(loaded) {
 }
 
 // src/panels/registry.ts
-var CORE_PANELS = ["clock", "words", "todo", "agenda", "journal", "calendar", "search", "secondbrain", "actions", "shopping"];
+var CORE_PANELS = ["brief", "clock", "words", "todo", "agenda", "journal", "calendar", "search", "secondbrain", "actions", "shopping"];
 var COMPANION_PANELS = ["flights", "meals", "contacts", "discipline", "music", "wardrobe", "food", "commons", "treasury"];
-var RETIRED_PANELS = ["brief", "places"];
+var RETIRED_PANELS = ["places"];
 var PANEL_ORDER = [...CORE_PANELS, ...COMPANION_PANELS, ...RETIRED_PANELS];
 var PANEL_TITLES = {
   clock: "Clock",
@@ -6708,7 +6708,7 @@ var PANEL_TITLES = {
   food: "Food log",
   commons: "Commons",
   treasury: "Budget",
-  brief: "Daily Brief (retired)",
+  brief: "Daily Brief",
   places: "Places (retired)"
 };
 var PANEL_DESCRIPTIONS = {
@@ -6722,10 +6722,10 @@ var PANEL_DESCRIPTIONS = {
   secondbrain: "Your active projects.",
   actions: "One-tap buttons for the dashboard and any companion plugins you have installed.",
   shopping: "Shopping lists grouped by aisle, store and who's paying. Imports Recipe Manager grocery lists.",
-  brief: "No longer offered to new installs. Still works while it's on; turn it off and it leaves this list. Your key file stays in your vault.",
+  brief: "An AI-written summary of your day. Off until you turn it on here and add your own API key under \u201CDaily brief\u201D below.",
   places: "No longer offered to new installs. Still works while it's on; turn it off and it leaves this list. Your shortcuts are kept."
 };
-var DEFAULT_OFF = new Set(RETIRED_PANELS);
+var DEFAULT_OFF = /* @__PURE__ */ new Set(["brief", ...RETIRED_PANELS]);
 function createPanels(order, enabled, plugin) {
   const factories = {
     clock: () => new ClockPanel(),

@@ -31,7 +31,7 @@ import {
 } from "../copy";
 
 /** The core dashboard, in default order. */
-export const CORE_PANELS = ["clock", "words", "todo", "agenda", "journal", "calendar", "search", "secondbrain", "actions", "shopping"];
+export const CORE_PANELS = ["brief", "clock", "words", "todo", "agenda", "journal", "calendar", "search", "secondbrain", "actions", "shopping"];
 
 /** Cards for companion plugins — each appears only while its plugin is installed and on. */
 export const COMPANION_PANELS = ["flights", "meals", "contacts", "discipline", "music", "wardrobe", "food", "commons", "treasury"];
@@ -39,10 +39,10 @@ export const COMPANION_PANELS = ["flights", "meals", "contacts", "discipline", "
 /**
  * Retired modules (0.7.0): no longer offered on a fresh install, but kept working
  * — and listed in settings — for anyone who still has them switched on, so an
- * update never hides something you were using. Their data (your shortcuts, the
- * AI key file) is untouched either way.
+ * update never hides something you were using. Their data (your shortcuts) is
+ * untouched either way.
  */
-export const RETIRED_PANELS = ["brief", "places"];
+export const RETIRED_PANELS = ["places"];
 
 /** Every panel id this version knows, in default order. Layout maps keep
  * entries for all of them. */
@@ -68,7 +68,7 @@ export const PANEL_TITLES: Record<string, string> = {
 	food: "Food log",
 	commons: "Commons",
 	treasury: "Budget",
-	brief: "Daily Brief (retired)",
+	brief: "Daily Brief",
 	places: "Places (retired)",
 };
 
@@ -84,13 +84,14 @@ export const PANEL_DESCRIPTIONS: Record<string, string> = {
 	secondbrain: "Your active projects.",
 	actions: "One-tap buttons for the dashboard and any companion plugins you have installed.",
 	shopping: "Shopping lists grouped by aisle, store and who's paying. Imports Recipe Manager grocery lists.",
-	brief: "No longer offered to new installs. Still works while it's on; turn it off and it leaves this list. Your key file stays in your vault.",
+	brief: "An AI-written summary of your day. Off until you turn it on here and add your own API key under “Daily brief” below.",
 	places: "No longer offered to new installs. Still works while it's on; turn it off and it leaves this list. Your shortcuts are kept.",
 };
 
-/** Off on a fresh install: the retired modules. Companion cards default on —
- * they only appear once their plugin is installed. */
-export const DEFAULT_OFF = new Set(RETIRED_PANELS);
+/** Off on a fresh install: the Daily Brief (needs your own API key) and the
+ * retired modules. Companion cards default on — they only appear once their
+ * plugin is installed. */
+export const DEFAULT_OFF = new Set(["brief", ...RETIRED_PANELS]);
 
 type PanelFactory = () => Panel;
 
