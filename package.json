@@ -1,6 +1,6 @@
 {
 	"name": "daily-dash",
-	"version": "0.8.0",
+	"version": "0.8.1",
 	"description": "Daily Dashboard — a warm, modular home surface for Obsidian: clock, verse of the day, agenda, to-dos, journal, meals, shopping, contacts, quotes, search, and an optional AI daily brief.",
 	"main": "main.js",
 	"scripts": {

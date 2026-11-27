@@ -6,6 +6,7 @@ import { DashView } from "../src/view";
 const files = new Map<string, string>();
 const today = new Date();
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+for (const n of [1, 2, 4, 5, 6, 9, 12]) { const d0 = new Date(today); d0.setDate(today.getDate() - n); files.set(`${ymd(d0)}.md`, "# Journal\nPlaceholder.\n"); }
 files.set(`${ymd(today)}.md`, "# Brain dump\n\n# Journal\nA calm morning. Placeholder journal text.\n\n# Reference tomorrow\n");
 files.set("Second brain/Garden redesign.md", "---\nstatus: active\n---\n");
 files.set("Second brain/Learn piano.md", "");

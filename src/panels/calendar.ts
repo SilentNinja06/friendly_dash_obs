@@ -23,10 +23,11 @@ export class CalendarPanel extends BasePanel {
 	private searchResultsEl?: HTMLElement;
 
 	protected renderBody(): void {
-		placard(this.el, "Calendar");
+		const head = placard(this.el, "Calendar");
+		this.renderBaseButton(head);
 		this.renderMonthNav();
 		this.renderGrid();
-		this.renderBaseButton();
+		this.el.createDiv({ cls: "dash-cal-legend", text: "Days with a dot have a daily note. Tap any day to open it; an empty day is created from your daily-note template." });
 		this.renderSearch();
 	}
 
@@ -34,26 +35,24 @@ export class CalendarPanel extends BasePanel {
 
 	private renderMonthNav(): void {
 		const nav = this.el.createDiv({ cls: "dash-cal-nav" });
-		const prev = nav.createEl("button", { cls: "dash-icon-btn", text: "‹", attr: { "aria-label": "Previous month" } });
-		prev.addEventListener("click", () => {
-			this.cursor = addMonths(this.cursor, -1);
+		const go = (to: Date) => {
+			this.cursor = to;
 			this.rerender();
-		});
-		const label = nav.createSpan({ cls: "dash-cal-month", text: moment(this.cursor).format("MMMM YYYY") });
-		label.addEventListener("click", () => {
-			this.cursor = startOfMonth(new Date());
-			this.rerender();
-		});
-		const next = nav.createEl("button", { cls: "dash-icon-btn", text: "›", attr: { "aria-label": "Next month" } });
-		next.addEventListener("click", () => {
-			this.cursor = addMonths(this.cursor, 1);
-			this.rerender();
-		});
+		};
+		const prev = nav.createEl("button", { cls: "dash-cal-navbtn", text: "‹", attr: { "aria-label": "Previous month" } });
+		prev.addEventListener("click", () => go(addMonths(this.cursor, -1)));
+		nav.createDiv({ cls: "dash-cal-month", text: moment(this.cursor).format("MMMM YYYY") });
+		const next = nav.createEl("button", { cls: "dash-cal-navbtn", text: "›", attr: { "aria-label": "Next month" } });
+		next.addEventListener("click", () => go(addMonths(this.cursor, 1)));
+		const today = nav.createEl("button", { cls: "dash-cal-navbtn", text: "Today" });
+		today.addEventListener("click", () => go(startOfMonth(new Date())));
 	}
 
 	private renderGrid(): void {
 		const grid = this.el.createDiv({ cls: "dash-cal-grid" });
 		for (const w of WEEKDAY_LABELS) grid.createDiv({ cls: "dash-cal-dow", text: w });
+		// Day tiles are divs, not <button>s, so the Obsidian theme's button styling
+		// can't repaint them; they're still keyboard-reachable and labelled.
 
 		const year = this.cursor.getFullYear();
 		const month = this.cursor.getMonth();
@@ -65,12 +64,22 @@ export class CalendarPanel extends BasePanel {
 		for (let i = 0; i < 42; i++) {
 			const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
 			const dateStr = fmt(d);
-			const cell = grid.createEl("button", { cls: "dash-cal-day", text: String(d.getDate()) });
+			const cell = grid.createDiv({ cls: "dash-cal-day", attr: { role: "button", tabindex: "0" } });
+			cell.createSpan({ cls: "dash-cal-num", text: String(d.getDate()) });
 			if (d.getMonth() !== month) cell.addClass("is-outside");
 			if (dateStr === todayStr) cell.addClass("is-today");
-			if (getDailyNoteFile(this.ctx.app, dateStr)) cell.addClass("has-note");
+			if (getDailyNoteFile(this.ctx.app, dateStr)) {
+				cell.addClass("has-note");
+				cell.createSpan({ cls: "dash-cal-dot" });
+			}
 			cell.setAttr("aria-label", moment(d).format("dddd, MMMM D, YYYY"));
 			cell.addEventListener("click", () => void this.openDay(dateStr));
+			cell.addEventListener("keydown", (e) => {
+				if (e.key === "Enter" || e.key === " ") {
+					e.preventDefault();
+					void this.openDay(dateStr);
+				}
+			});
 		}
 	}
 
@@ -86,9 +95,8 @@ export class CalendarPanel extends BasePanel {
 
 	// -------------------------------------------------------------- base button
 
-	private renderBaseButton(): void {
-		const row = this.el.createDiv({ cls: "dash-btn-row" });
-		const btn = row.createEl("button", { cls: "dash-btn", text: "Open all-days table" });
+	private renderBaseButton(head: HTMLElement): void {
+		const btn = head.createEl("button", { cls: "dash-btn dash-btn-sm dash-cal-basebtn", text: "All days", attr: { "aria-label": "Open the table of all daily notes" } });
 		btn.addEventListener("click", async () => {
 			try {
 				const path = this.ctx.settings().calendarBasePath;

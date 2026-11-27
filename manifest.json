@@ -1,7 +1,7 @@
 {
 	"id": "daily-dash",
 	"name": "Daily Dashboard",
-	"version": "0.8.0",
+	"version": "0.8.1",
 	"minAppVersion": "1.4.0",
 	"description": "A calm home dashboard for your vault: clock, daily quote or verse, agenda, to-dos, journal, daily-note calendar, knowledge base and projects, with cards for companion plugins when they're installed. Desktop and mobile.",
 	"author": "SilentNinja06",
