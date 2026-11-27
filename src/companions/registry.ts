@@ -25,6 +25,7 @@ export interface Companion {
 }
 
 export const COMPANIONS: Companion[] = [
+	{ pluginId: "health", panelId: "health", name: "Health", blurb: "Today's doses with one-tap Log due, as-needed medications, and symptoms.", repo: "SilentNinja06/tracking.obs" },
 	{ pluginId: "brainstormer", panelId: "flights", name: "Brainstormer", blurb: "Focus sessions as flights: the flight in progress, or where you are and a button to book the next one.", repo: "SilentNinja06/brainstormer.obs" },
 	{ pluginId: "recipe-manager", panelId: "meals", name: "Recipe Manager", blurb: "Today's planned meals and your grocery list.", repo: "SilentNinja06/Recipes_obs" },
 	{ pluginId: "simple-contact-manager", panelId: "contacts", name: "Simple Contact Manager", blurb: "Who you're due to catch up with, with a one-tap log.", repo: "SilentNinja06/simple_cm" },
