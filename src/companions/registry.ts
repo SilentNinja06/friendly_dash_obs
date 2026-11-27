@@ -35,6 +35,7 @@ export const COMPANIONS: Companion[] = [
 	{ pluginId: "arfid-tracker", panelId: "food", name: "Food log (ARFID Tracker)", blurb: "What you've logged today, and quick buttons to log more.", repo: "SilentNinja06/ARFID_obs" },
 	{ pluginId: "commons", panelId: "commons", name: "Commons", blurb: "Notes left for whoever's next, and who's here.", repo: "SilentNinja06/commons" },
 	{ pluginId: "treasury", panelId: "treasury", name: "Treasury (budget)", blurb: "A quick way into your budget.", repo: "SilentNinja06/treasury_obs" },
+	{ pluginId: "spiral-shutdown-logger", panelId: "spiral", name: "Spiral & Shutdown Logger", blurb: "How many entries today and in the last 7 days (counts only), and a button to log one.", repo: "SilentNinja06/AHeatmap_obs" },
 ];
 
 export const COMPANION_BY_PANEL = new Map(COMPANIONS.map((c) => [c.panelId, c] as const));

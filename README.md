@@ -52,6 +52,7 @@ nothing they read leaves your device. Install them with
 | **Food log** — today's log and quick buttons | ARFID Tracker (`SilentNinja06/ARFID_obs`) |
 | **Commons** — notes for whoever's next | Commons (`SilentNinja06/commons`) |
 | **Budget** — a quick way into your budget | Treasury (`SilentNinja06/treasury_obs`) |
+| **Spiral log** — entries today and in the last 7 days (counts only), and a Log button | Spiral & Shutdown Logger (`SilentNinja06/AHeatmap_obs`) |
 
 **Privacy check.** Before any dashboard release, an automatic check scans this
 plugin and the latest release of every companion above for personal details

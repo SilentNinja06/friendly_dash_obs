@@ -18,6 +18,7 @@ import { WardrobePanel } from "./companions/wardrobe";
 import { FoodPanel } from "./companions/food";
 import { CommonsPanel } from "./companions/commons";
 import { TreasuryPanel } from "./companions/treasury";
+import { SpiralPanel } from "./companions/spiral";
 import { CompanionGate } from "../companions/gate";
 import { COMPANION_BY_PANEL } from "../companions/registry";
 import { friendlyWeekReviewConfig } from "../weekreview";
@@ -35,7 +36,7 @@ import {
 export const CORE_PANELS = ["brief", "clock", "words", "todo", "agenda", "journal", "calendar", "search", "secondbrain", "actions", "shopping"];
 
 /** Cards for companion plugins — each appears only while its plugin is installed and on. */
-export const COMPANION_PANELS = ["health", "flights", "meals", "contacts", "discipline", "music", "wardrobe", "food", "commons", "treasury"];
+export const COMPANION_PANELS = ["health", "flights", "meals", "contacts", "discipline", "music", "wardrobe", "food", "commons", "treasury", "spiral"];
 
 /**
  * Retired modules (0.7.0): no longer offered on a fresh install, but kept working
@@ -70,6 +71,7 @@ export const PANEL_TITLES: Record<string, string> = {
 	food: "Food log",
 	commons: "Commons",
 	treasury: "Budget",
+	spiral: "Spiral log",
 	brief: "Daily Brief",
 	places: "Places (retired)",
 };
@@ -121,6 +123,7 @@ export function createPanels(order: string[], enabled: Record<string, boolean>, 
 		food: () => new FoodPanel(),
 		commons: () => new CommonsPanel(),
 		treasury: () => new TreasuryPanel(),
+		spiral: () => new SpiralPanel(),
 		brief: () => new BriefPanel(),
 		places: () => new PlacesPanel(FRIENDLY_PLACES_COPY),
 	};

@@ -6135,7 +6135,8 @@ var COMPANIONS = [
   { pluginId: "meridian-wardrobe", panelId: "wardrobe", name: "Wardrobe", blurb: "Laundry to do, pieces to replace, and today's outfit.", repo: "SilentNinja06/outfit_obs" },
   { pluginId: "arfid-tracker", panelId: "food", name: "Food log (ARFID Tracker)", blurb: "What you've logged today, and quick buttons to log more.", repo: "SilentNinja06/ARFID_obs" },
   { pluginId: "commons", panelId: "commons", name: "Commons", blurb: "Notes left for whoever's next, and who's here.", repo: "SilentNinja06/commons" },
-  { pluginId: "treasury", panelId: "treasury", name: "Treasury (budget)", blurb: "A quick way into your budget.", repo: "SilentNinja06/treasury_obs" }
+  { pluginId: "treasury", panelId: "treasury", name: "Treasury (budget)", blurb: "A quick way into your budget.", repo: "SilentNinja06/treasury_obs" },
+  { pluginId: "spiral-shutdown-logger", panelId: "spiral", name: "Spiral & Shutdown Logger", blurb: "How many entries today and in the last 7 days (counts only), and a button to log one.", repo: "SilentNinja06/AHeatmap_obs" }
 ];
 var COMPANION_BY_PANEL = new Map(COMPANIONS.map((c) => [c.panelId, c]));
 function registry(app) {
@@ -6674,6 +6675,51 @@ var TreasuryPanel = class extends BasePanel2 {
   }
 };
 
+// src/panels/companions/spiral.ts
+var PLUGIN_ID4 = "spiral-shutdown-logger";
+var SpiralPanel = class extends BasePanel2 {
+  constructor() {
+    super(...arguments);
+    this.id = "spiral";
+    this.title = "Spiral log";
+    this.unsub = null;
+    this.subscribed = null;
+  }
+  async setup() {
+    this.onCleanup(() => {
+      var _a;
+      return (_a = this.unsub) == null ? void 0 : _a.call(this);
+    });
+  }
+  renderBody() {
+    var _a, _b;
+    const api = (_a = companionPlugin(this.ctx.app, PLUGIN_ID4)) == null ? void 0 : _a.api;
+    const head = placard2(this.el, "Spiral log");
+    const open = () => (api == null ? void 0 : api.openDashboard) ? api.openDashboard() : runCompanionCommand(this.ctx.app, `${PLUGIN_ID4}:open-dashboard`);
+    const log = () => (api == null ? void 0 : api.openCapture) ? api.openCapture() : runCompanionCommand(this.ctx.app, `${PLUGIN_ID4}:quick-capture`);
+    head.createDiv({ cls: "dash-qotd-tools" }).createEl("button", { cls: "dash-qotd-add", text: "\u2197", attr: { "aria-label": "Open the spiral log dashboard" } }).addEventListener("click", open);
+    if (api && api.onChange && this.subscribed !== api) {
+      (_b = this.unsub) == null ? void 0 : _b.call(this);
+      this.subscribed = api;
+      this.unsub = api.onChange(() => this.rerender());
+    }
+    const card = this.el.createDiv({ cls: "cmp-card" });
+    let counts = null;
+    try {
+      if (api == null ? void 0 : api.getCounts) counts = api.getCounts();
+      else if (api == null ? void 0 : api.getTodaySummary) counts = { today: api.getTodaySummary().count };
+    } catch (e) {
+      counts = null;
+    }
+    if (counts) {
+      const stats = card.createDiv({ cls: "cmp-stats" });
+      stat(stats, String(counts.today), "today");
+      if (counts.last7 !== void 0) stat(stats, String(counts.last7), "last 7 days");
+    }
+    card.createDiv({ cls: "dash-btn-row" }).createEl("button", { cls: "dash-btn dash-btn-primary", text: "Log an entry" }).addEventListener("click", log);
+  }
+};
+
 // src/companions/gate.ts
 var CompanionGate = class {
   constructor(pluginId, inner) {
@@ -6764,7 +6810,7 @@ function migrateDailyWords(loaded) {
 
 // src/panels/registry.ts
 var CORE_PANELS = ["brief", "clock", "words", "todo", "agenda", "journal", "calendar", "search", "secondbrain", "actions", "shopping"];
-var COMPANION_PANELS = ["health", "flights", "meals", "contacts", "discipline", "music", "wardrobe", "food", "commons", "treasury"];
+var COMPANION_PANELS = ["health", "flights", "meals", "contacts", "discipline", "music", "wardrobe", "food", "commons", "treasury", "spiral"];
 var RETIRED_PANELS = ["places"];
 var PANEL_ORDER = [...CORE_PANELS, ...COMPANION_PANELS, ...RETIRED_PANELS];
 var PANEL_TITLES = {
@@ -6788,6 +6834,7 @@ var PANEL_TITLES = {
   food: "Food log",
   commons: "Commons",
   treasury: "Budget",
+  spiral: "Spiral log",
   brief: "Daily Brief",
   places: "Places (retired)"
 };
@@ -6828,6 +6875,7 @@ function createPanels(order, enabled, plugin) {
     food: () => new FoodPanel(),
     commons: () => new CommonsPanel(),
     treasury: () => new TreasuryPanel(),
+    spiral: () => new SpiralPanel(),
     brief: () => new BriefPanel(),
     places: () => new PlacesPanel(FRIENDLY_PLACES_COPY)
   };
