@@ -1,0 +1,28 @@
+name: Privacy check
+
+# Re-checks the dashboard and the latest release of every companion plugin for
+# personal details: weekly (companions release on their own schedule), on every
+# push, and on demand. The private term list comes from the PRIVACY_TERMS secret
+# and is never printed. A failure here also blocks the release workflow.
+on:
+  schedule:
+    - cron: "17 14 * * 1"
+  push:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Scan
+        env:
+          PRIVACY_TERMS: ${{ secrets.PRIVACY_TERMS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/privacy-scan.mjs

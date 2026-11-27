@@ -18,6 +18,11 @@ export interface ThemeDef {
 
 export const THEMES: ThemeDef[] = [
 	{
+		id: "midnight",
+		label: "Midnight",
+		blurb: "Warm near-black with soft bone text and an amber accent; a pale paper version in light mode. Quiet and focused.",
+	},
+	{
 		id: "sleek",
 		label: "Sleek Modern",
 		blurb: "Clean and near-monochrome, with a single deep-green accent. A calm, neutral place to start.",
@@ -39,7 +44,7 @@ export const THEMES: ThemeDef[] = [
 	},
 ];
 
-export const DEFAULT_THEME = "sleek";
+export const DEFAULT_THEME = "midnight";
 
 export function isThemeId(id: string): boolean {
 	return THEMES.some((t) => t.id === id);

@@ -1,8 +1,9 @@
 # Daily Dashboard
 
-A warm, simple home surface for [Obsidian](https://obsidian.md) — a clock, a
-verse of the day, today's agenda, persistent to-dos, a journal, meals, and
-search, all on one page. Works on desktop and mobile.
+A calm, simple home surface for [Obsidian](https://obsidian.md) — a clock, a
+quote or verse of the day, today's agenda, persistent to-dos, a journal, a
+daily-note calendar, your knowledge base and projects, all on one page — plus
+cards for companion plugins you install. Works on desktop and mobile.
 
 Built to be legible and forgiving for someone who did not build it: empty states
 explain themselves, errors say what to do, and there is no jargon or assumed
@@ -15,26 +16,62 @@ you from a fresh install to a working dashboard.
 
 Every panel is a separate module. Turn on only the ones you want in
 **Settings → Daily Dashboard → Panels**, reorder them, and (on the desktop) put
-each in a column with an optional span. Panels that need another plugin explain
-what they need instead of erroring.
+each in a column with an optional span.
 
-| Panel | What it does | On by default |
-| --- | --- | --- |
-| **Daily Brief** | An AI-written summary of your day, plus an “End the day” recap written into today's note. Needs your own API key (Anthropic or any OpenAI-compatible service); only the categories you allow are sent. | No |
-| **Clock** | Time of day (12-hour by default, 24-hour optional) with the date. | Yes |
-| **Verse of the Day** | One verse of Proverbs, chosen from the date. King James Version (public domain). No commentary. | Yes |
-| **To-do** | A persistent to-do list with recurring items, scheduling, sub-tasks, due dates and notes. Nothing resets overnight; completing a task logs it in today's note. A **Week in review** button looks back over the last seven days. | Yes |
-| **Today's Agenda** | Today's events from up to 20 calendar share links plus your own one-off events. A **Now / Next** strip shows what's happening and how long you're free (each calendar can be left out of it, and given its own colour). **Week's goals** sets goals for the week (each can become a to-do), and **Print week** prints a week-at-a-glance planner with those goals at the top. | Yes |
-| **Journal** | Writes into the `# Brain dump`, `# Journal`, and `# Reference tomorrow` sections of today's daily note. Yesterday's "Reference tomorrow" is carried to the top. | Yes |
-| **Meals** | Today's planned recipes and grocery list, via the Recipe Manager plugin. | Yes |
-| **Shopping** | Shopping lists with quantity, aisle, store and who's paying; filter for a trip, group by aisle, tick things off. Imports a Recipe Manager grocery list in one tap. | Yes |
-| **Quick Actions** | One-tap buttons: add a to-do, event or shopping item, the week's goals, the week in review — plus buttons for Recipe Manager, Simple Contact Manager or the food tracker when those are installed. | Yes |
-| **Contacts** | Who's due or overdue for a catch-up, via the Simple Contact Manager plugin, with a one-tap “Log”. | No |
-| **Quote of the Day** | A quote a day from your own collection of things people have said (add, search, edit in the app). | No |
-| **Search** | Fuzzy search across your chosen folders, plus make notes, make categories, and file notes under a category. | Yes |
-| **Calendar** | A month grid — click a day to open its daily note — plus a Bases table and a search inside daily notes. | Yes |
-| **Second Brain** | Your active projects; archive a finished one or start a new one. | Yes |
-| **Places** | Shortcut buttons to your favourite notes, folders, and commands. | Yes |
+| Panel | What it does |
+| --- | --- |
+| **Daily Brief** *(off by default)* | An AI-written summary of your day, plus an “End the day” recap written into today's note. Turn it on in settings and add your own API key (Anthropic or any OpenAI-compatible service); only the categories you allow are sent. |
+| **Clock** | Time of day (12-hour by default, 24-hour optional) with the date. |
+| **Daily words** | Your choice under **Daily words**: a **Quote of the day** from your own collection (the default), a **Verse of the day** (one verse of Proverbs, KJV, public domain), or nothing. |
+| **To-do** | A persistent to-do list with recurring items, scheduling, sub-tasks, due dates and notes. Nothing resets overnight; completing a task logs it in today's note. **Week in review** looks back over the last seven days. |
+| **Today's Agenda** | Today's events from up to 20 calendar share links plus your own one-off events, a **Now / Next** strip, **Week's goals**, and **Print week**. |
+| **Journal** | Writes into the `# Brain dump`, `# Journal`, and `# Reference tomorrow` sections of today's daily note. |
+| **Calendar** | A month grid of your daily notes (click a day to open it), a Bases table, and a search inside daily notes. |
+| **Knowledge base** | Fuzzy search across your chosen folders; make notes and categories. |
+| **Second Brain** | Your active projects; archive a finished one or start a new one. |
+| **Quick Actions** | One-tap buttons: add a to-do, event or shopping item, the week's goals, the week in review. |
+| **Shopping** | Shopping lists with quantity, aisle, store and who's paying; imports a Recipe Manager grocery list. |
+
+### Companion plugins
+
+These are separate plugins. Each one's card **only appears while that plugin is
+installed and turned on**; otherwise there's no trace of it on the dashboard.
+Cards only read — anything that changes data happens in the plugin itself — and
+nothing they read leaves your device. Install them with
+[BRAT](https://github.com/TfTHacker/obsidian42-brat):
+
+| Card | Plugin (BRAT repository) |
+| --- | --- |
+| **Flights** — focus sessions as flights | Brainstormer (`SilentNinja06/brainstormer.obs`) |
+| **Meals** — today's meals and groceries | Recipe Manager (`SilentNinja06/Recipes_obs`) |
+| **Contacts** — who you're due to catch up with | Simple Contact Manager (`SilentNinja06/simple_cm`) |
+| **Meditation** — streak and a button to sit | Discipline (`SilentNinja06/meditations.obs`) |
+| **Music** — songs in progress | Music (`SilentNinja06/music.obs`) |
+| **Wardrobe** — laundry and today's outfit | Wardrobe (`SilentNinja06/outfit_obs`) |
+| **Food log** — today's log and quick buttons | ARFID Tracker (`SilentNinja06/ARFID_obs`) |
+| **Commons** — notes for whoever's next | Commons (not public yet) |
+| **Budget** — a quick way into your budget | Treasury (not public yet) |
+
+**Privacy check.** Before any dashboard release, an automatic check scans this
+plugin and the latest release of every companion above for personal details
+(email addresses, phone numbers, and a private list of terms the author keeps
+as a repository secret). It also runs weekly. A finding blocks the release.
+
+### Updating from 0.6
+
+Nothing is deleted, and nothing you were using disappears:
+
+- **Verse of the Day** and **Quote of the Day** became one **Daily words** panel,
+  in the Verse panel's old spot. It keeps showing whichever you had on (the quote
+  if you had both). Change it any time under **Daily words**.
+- **Daily Brief** works as before and still starts switched off; turn it on and
+  add your key in settings.
+- **Places** is no longer offered to new installs. If you have it on, it keeps
+  working and stays in the panel list until you switch it off. Your shortcuts stay.
+- **Meals** and **Contacts** are now companion cards: they show only when Recipe
+  Manager / Simple Contact Manager are installed.
+- New look: a new default theme, **Midnight**, and a quieter frame for every
+  theme. Your chosen theme is kept.
 
 ### Phone tabs
 
@@ -48,6 +85,14 @@ always shows everything.
 Your to-dos, local events, panel layout and tabs, shopping lists, quotes, and the
 AI key (if you use one) are kept in small Markdown files under `Daily Dashboard/`,
 so Obsidian Sync carries them to every device and they survive plugin updates.
+
+## Support and updates
+
+- Announcements on [Signal](https://signal.group/#CjQKIE0SrZPTQLhQDCNcponi2KvgzOTbpyvwB7t57bbtBK_vEhDZsGKwWZHJMpBLz8AgGrMe)
+- [Discord server](https://discord.gg/KcKG73WGq)
+- [Buy me a coffee](https://buymeacoffee.com/pipertruac1)
+
+These links are also in **Settings → Daily Dashboard → Support & updates**.
 
 ## Commands and links
 

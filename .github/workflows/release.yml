@@ -30,6 +30,12 @@ jobs:
           npm test
           npm run build
 
+      - name: Privacy check (dashboard + companion plugins)
+        env:
+          PRIVACY_TERMS: ${{ secrets.PRIVACY_TERMS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/privacy-scan.mjs
+
       - name: Determine version
         id: version
         run: echo "version=$(node -p "require('./manifest.json').version")" >> "$GITHUB_OUTPUT"

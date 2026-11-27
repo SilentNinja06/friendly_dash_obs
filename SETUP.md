@@ -12,7 +12,7 @@ step, do the part you can, and move on. Nothing here can break your computer.
 ## What you're setting up
 
 **Obsidian** is a free app for keeping notes. **Daily Dashboard** is an add-on
-for it that gives you a friendly home screen — a clock, a verse for the day,
+for it that gives you a friendly home screen — a clock, a quote or verse for the day,
 your to-dos, today's calendar, a journal, your meals, and a search box — all on
 one page.
 
@@ -142,7 +142,7 @@ BRAT downloads and turns both on for you.
    icon** (a little square with lines). Click it.
    - If you don't see it, press **Ctrl/Cmd + P**, type **Open dashboard**, and
      press Enter.
-2. Your dashboard opens. The clock and today's verse are already working.
+2. Your dashboard opens. The clock is already working, and the Daily words panel shows a quote once you add one (or switch it to a daily verse under **Daily words** in the settings).
 
 **Tip:** to make the dashboard open by itself each time you start Obsidian, go to
 **Settings → Daily Dashboard** and turn on **Open on startup**.
@@ -181,11 +181,14 @@ off the rest.
 1. Go to **Settings → Daily Dashboard → Panels**.
 2. Use the switch on each row to show or hide that panel, and the arrows to move
    it up or down.
-3. A few panels start switched off because they need something extra:
-   - **Contacts** works with the *Simple Contact Manager* add-on.
-   - **Quote of the Day** fills up as you add quotes.
-   - **Daily Brief** needs an API key from an AI service (see the *Daily brief*
-     section at the bottom of the settings). It's completely optional.
+3. **Daily words** shows a quote from your own collection each day. Pick a
+   Bible verse (Proverbs) or nothing instead under **Daily words**.
+4. **Daily Brief** (an AI summary of your day) starts switched off. To use it,
+   switch it on and add an API key in the *Daily brief* section at the bottom
+   of the settings. It's completely optional.
+5. Cards for companion plugins (Flights, Meals, Contacts, Meditation, Music,
+   Wardrobe, Food log…) appear by themselves once you install that plugin.
+   **Settings → Companion plugins** lists them with where to get each one.
 
 **On a phone:** under **Phone tabs**, click **+ Add tab** a few times, give the
 tabs names, then use the tab dropdown on each panel row to put panels where you

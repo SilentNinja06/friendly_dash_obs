@@ -884,3 +884,176 @@
 .dash-brief h1, .dash-brief h2, .dash-brief h3 { font-size: 1em; margin: 0.6em 0 0.2em; }
 .dash-brief-foot { margin-top: 12px; display: flex; justify-content: flex-end; }
 .dash-brief-endday:disabled { opacity: 0.6; cursor: default; }
+
+/* ============================== MIDNIGHT ============================== */
+/* Warm near-black, bone text, amber accent with a cool slate second accent;
+ * light mode is warm paper. Monospace labels, flat cards, hairline rules. */
+.dash-root[data-theme="midnight"] {
+	--dash-radius: 8px;
+	--dash-rule-weight: 1px;
+	--dash-font-display: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	--dash-font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	--dash-placard-transform: uppercase;
+	--dash-placard-spacing: 0.14em;
+	--dash-cal-1: #b5541a; --dash-cal-2: #4f7a72; --dash-cal-3: #8c6d3f; --dash-cal-4: #6d6aa0;
+	--dash-cal-5: #9a4b5a; --dash-cal-6: #5b7f97; --dash-cal-7: #a08436; --dash-cal-8: #7a7a6a;
+	/* light: warm paper */
+	--dash-bg: #efebe2; --dash-surface: #faf8f3; --dash-surface-alt: #f2eee5;
+	--dash-text: #1f1c16; --dash-text-muted: #6d6556; --dash-border: #ddd6c7;
+	--dash-accent: #a64a14; --dash-accent-2: #3e5650; --dash-accent-3: #3e5650;
+	--dash-warning: #a8700f; --dash-danger: #9b2a24; --dash-on-accent: #fffaf2;
+}
+.theme-dark .dash-root[data-theme="midnight"] {
+	--dash-bg: #16140f; --dash-surface: #1c1a14; --dash-surface-alt: #221f18;
+	--dash-text: #e0d8c3; --dash-text-muted: #9c937f; --dash-border: #332f26;
+	--dash-accent: #c4642a; --dash-accent-2: #6f8079; --dash-accent-3: #8fa39b;
+	--dash-warning: #d9a441; --dash-danger: #c56a6a; --dash-on-accent: #17130d;
+}
+
+/* ======================= SLEEK LAYER (all themes) ======================= */
+/* 0.7.0: a quieter, tighter frame shared by every theme — small spaced
+ * labels, flat hairline cards, compact controls, tabular numbers. Themes still
+ * own every colour. */
+.dash-root {
+	--dash-font-mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+	font-size: 15px;
+	line-height: 1.5;
+	padding: 20px;
+	padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px));
+	font-variant-numeric: tabular-nums;
+}
+.dash-topbar { margin-bottom: 18px; }
+.dash-brand-name {
+	font-family: var(--dash-font-mono);
+	font-size: 0.78em;
+	font-weight: 600;
+	letter-spacing: 0.22em;
+	text-transform: uppercase;
+	color: var(--dash-text-muted);
+}
+.dash-brand svg { width: 18px; height: 18px; }
+.dash-grid { column-gap: 14px; }
+.dash-panel {
+	box-shadow: none;
+	border-radius: var(--dash-radius);
+	margin-bottom: 14px;
+}
+.dash-panel.dash-panel-absent { display: none; }
+.dash-panel-body { padding: 16px 18px 18px; }
+
+.dash-placard {
+	border-bottom: none;
+	padding-bottom: 0;
+	margin-bottom: 12px;
+	align-items: center;
+	min-height: 26px;
+}
+.dash-placard-title {
+	font-family: var(--dash-font-mono);
+	font-size: 0.72em;
+	font-weight: 600;
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--dash-text-muted);
+}
+.dash-placard-badge { font-family: var(--dash-font-mono); font-size: 0.7em; letter-spacing: 0.06em; }
+.dash-placard .dash-qotd-add {
+	background: transparent;
+	border-color: transparent;
+	color: var(--dash-text-muted);
+}
+.dash-placard .dash-qotd-add:hover { color: var(--dash-text); border-color: var(--dash-border); }
+
+.dash-btn,
+.dash-qotd-addbig {
+	font-family: var(--dash-font-mono);
+	font-size: 0.7em;
+	font-weight: 500;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	padding: 8px 12px;
+	min-height: 34px;
+	background: transparent;
+}
+.dash-btn-primary {
+	background: var(--dash-accent);
+	color: var(--dash-on-accent);
+	font-weight: 600;
+}
+.dash-btn-sm { font-size: 0.66em; min-height: 28px; padding: 4px 9px; }
+.dash-chip { font-family: var(--dash-font-mono); letter-spacing: 0.04em; border-radius: 999px; }
+.dash-subhead {
+	font-family: var(--dash-font-mono);
+	font-size: 0.68em;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	font-weight: 600;
+}
+.dash-root input[type="text"],
+.dash-root input[type="search"],
+.dash-root textarea {
+	background: var(--dash-surface-alt);
+	border: var(--dash-rule-weight) solid var(--dash-border);
+	border-radius: calc(var(--dash-radius) - 2px);
+}
+
+.dash-clock { padding: 4px 0 2px; }
+.dash-clock-time {
+	font-weight: 300;
+	font-size: 3.4em;
+	letter-spacing: -0.02em;
+	line-height: 1.05;
+}
+.dash-clock-date {
+	font-family: var(--dash-font-mono);
+	font-size: 0.72em;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	margin-top: 8px;
+}
+
+/* ---------------------------------------------------- companion cards */
+.cmp-card { display: flex; flex-direction: column; gap: 8px; }
+.cmp-line { font-size: 0.9em; }
+.cmp-note { font-size: 0.88em; font-style: italic; color: var(--dash-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmp-route { display: flex; align-items: center; gap: 8px; }
+.cmp-code { font-family: var(--dash-font-mono); font-weight: 700; font-size: 1.15em; letter-spacing: 0.04em; }
+.cmp-dash { flex: 1 1 20px; max-width: 56px; border-top: 1px dashed var(--dash-border); }
+.cmp-plane { color: var(--dash-text-muted); }
+.cmp-tag {
+	font-family: var(--dash-font-mono);
+	font-size: 0.66em;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--dash-accent-2);
+}
+.cmp-tag.is-warn { color: var(--dash-warning); }
+.cmp-bar { height: 4px; border-radius: 2px; background: var(--dash-surface-alt); overflow: hidden; }
+.cmp-bar-fill { height: 100%; width: 0; background: var(--dash-accent); transition: width 1s linear; }
+.cmp-nums { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.cmp-big { font-size: 1.5em; font-weight: 300; line-height: 1.1; }
+.cmp-nums .cmp-big { font-family: var(--dash-font-mono); font-size: 1.05em; font-weight: 500; }
+.cmp-stats { display: flex; gap: 24px; }
+.cmp-stat .cmp-big { font-size: 1.9em; }
+.cmp-stat.is-warn .cmp-big { color: var(--dash-warning); }
+.cmp-label { font-family: var(--dash-font-mono); font-size: 0.64em; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dash-text-muted); }
+.cmp-row { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; border-top: var(--dash-rule-weight) solid var(--dash-border); cursor: default; }
+.cmp-row:first-child { border-top: none; }
+.cmp-row.is-aside { opacity: 0.7; }
+.cmp-row-time { font-family: var(--dash-font-mono); font-size: 0.75em; color: var(--dash-text-muted); flex: none; min-width: 3.6em; }
+.cmp-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92em; }
+.cmp-row .dash-btn { min-height: 26px; padding: 3px 8px; }
+.cmp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cmp-chip {
+	font-size: 0.78em;
+	padding: 3px 10px;
+	border-radius: 999px;
+	border: var(--dash-rule-weight) solid var(--cmp-chip, var(--dash-border));
+	background: transparent;
+	color: var(--dash-text);
+	cursor: pointer;
+}
+.cmp-chip.is-on { background: var(--cmp-chip, var(--dash-accent)); color: var(--dash-on-accent); }
+.cmp-globe { width: 100%; max-width: 280px; margin: 2px auto; aspect-ratio: 1; border-radius: 50%; overflow: hidden; cursor: pointer; }
+.cmp-globe svg { width: 100%; height: 100%; display: block; }
+.cmp-globe.is-empty { display: none; }
