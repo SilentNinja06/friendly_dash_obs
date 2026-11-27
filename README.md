@@ -42,6 +42,7 @@ nothing they read leaves your device. Install them with
 
 | Card | Plugin (BRAT repository) |
 | --- | --- |
+| **Health** — today's doses, one-tap Log due, as-needed meds, symptoms | Health (`SilentNinja06/tracking.obs`) |
 | **Flights** — focus sessions as flights | Brainstormer (`SilentNinja06/brainstormer.obs`) |
 | **Meals** — today's meals and groceries | Recipe Manager (`SilentNinja06/Recipes_obs`) |
 | **Contacts** — who you're due to catch up with | Simple Contact Manager (`SilentNinja06/simple_cm`) |

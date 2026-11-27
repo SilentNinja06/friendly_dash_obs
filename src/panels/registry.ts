@@ -11,6 +11,7 @@ import { ContactsPanel } from "./contacts";
 import { BriefPanel } from "./brief";
 import { WordsPanel } from "./words";
 import { FlightsPanel } from "./companions/flights";
+import { HealthPanel } from "./companions/health";
 import { DisciplinePanel } from "./companions/discipline";
 import { MusicPanel } from "./companions/music";
 import { WardrobePanel } from "./companions/wardrobe";
@@ -34,7 +35,7 @@ import {
 export const CORE_PANELS = ["brief", "clock", "words", "todo", "agenda", "journal", "calendar", "search", "secondbrain", "actions", "shopping"];
 
 /** Cards for companion plugins — each appears only while its plugin is installed and on. */
-export const COMPANION_PANELS = ["flights", "meals", "contacts", "discipline", "music", "wardrobe", "food", "commons", "treasury"];
+export const COMPANION_PANELS = ["health", "flights", "meals", "contacts", "discipline", "music", "wardrobe", "food", "commons", "treasury"];
 
 /**
  * Retired modules (0.7.0): no longer offered on a fresh install, but kept working
@@ -59,6 +60,7 @@ export const PANEL_TITLES: Record<string, string> = {
 	secondbrain: "Second Brain",
 	actions: "Quick Actions",
 	shopping: "Shopping",
+	health: "Health",
 	flights: "Flights",
 	meals: "Meals",
 	contacts: "Contacts",
@@ -109,6 +111,7 @@ export function createPanels(order: string[], enabled: Record<string, boolean>, 
 		secondbrain: () => new SecondBrainPanel(plugin.secondBrain, FRIENDLY_SECOND_BRAIN_COPY),
 		actions: () => new ActionsPanel(),
 		shopping: () => new ShoppingPanel(),
+		health: () => new HealthPanel(),
 		flights: () => new FlightsPanel(),
 		meals: () => new MealsPanel(FRIENDLY_MEALS_COPY),
 		contacts: () => new ContactsPanel(),

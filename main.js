@@ -6120,6 +6120,7 @@ var WordsPanel = class {
 
 // src/companions/registry.ts
 var COMPANIONS = [
+  { pluginId: "health", panelId: "health", name: "Health", blurb: "Today's doses with one-tap Log due, as-needed medications, and symptoms.", repo: "SilentNinja06/tracking.obs" },
   { pluginId: "brainstormer", panelId: "flights", name: "Brainstormer", blurb: "Focus sessions as flights: the flight in progress, or where you are and a button to book the next one.", repo: "SilentNinja06/brainstormer.obs" },
   { pluginId: "recipe-manager", panelId: "meals", name: "Recipe Manager", blurb: "Today's planned meals and your grocery list.", repo: "SilentNinja06/Recipes_obs" },
   { pluginId: "simple-contact-manager", panelId: "contacts", name: "Simple Contact Manager", blurb: "Who you're due to catch up with, with a one-tap log.", repo: "SilentNinja06/simple_cm" },
@@ -6288,6 +6289,78 @@ function clock(ms) {
   const ss = String(s).padStart(2, "0");
   return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
+
+// src/panels/companions/health.ts
+var HealthPanel = class extends BasePanel2 {
+  constructor() {
+    super(...arguments);
+    this.id = "health";
+    this.title = "Health";
+    this.unsub = null;
+    this.subscribed = null;
+  }
+  async setup() {
+    this.onCleanup(() => {
+      var _a;
+      return (_a = this.unsub) == null ? void 0 : _a.call(this);
+    });
+  }
+  api() {
+    var _a;
+    const api = (_a = companionPlugin(this.ctx.app, "health")) == null ? void 0 : _a.api;
+    return api && api.version === 1 && typeof api.today === "function" ? api : null;
+  }
+  renderBody() {
+    var _a;
+    const api = this.api();
+    const head = placard2(this.el, "Health");
+    if (!api) {
+      this.el.createDiv({ cls: "dash-muted", text: "Update Health to see it here." });
+      return;
+    }
+    if (this.subscribed !== api) {
+      (_a = this.unsub) == null ? void 0 : _a.call(this);
+      this.subscribed = api;
+      this.unsub = api.onChange(() => this.rerender());
+    }
+    head.createDiv({ cls: "dash-qotd-tools" }).createEl("button", { cls: "dash-qotd-add", text: "\u2197", attr: { "aria-label": "Open Health" } }).addEventListener("click", () => api.openView());
+    const card = this.el.createDiv({ cls: "cmp-card" });
+    let live = false;
+    try {
+      live = api.live();
+    } catch (e) {
+      live = false;
+    }
+    if (!live) {
+      card.createDiv({ cls: "dash-muted", text: "Health is waiting to import your medications. Open it to review the import." });
+      card.createDiv({ cls: "dash-btn-row" }).createEl("button", { cls: "dash-btn dash-btn-primary", text: "Open Health" }).addEventListener("click", () => api.openImport ? api.openImport() : api.openView());
+      return;
+    }
+    const t = api.today();
+    const due = t.due.filter((d) => d.overdue);
+    const stats = card.createDiv({ cls: "cmp-stats" });
+    const stat2 = (v, l, warn = false) => {
+      const s = stats.createDiv({ cls: "cmp-stat" + (warn ? " is-warn" : "") });
+      s.createDiv({ cls: "cmp-big", text: v });
+      s.createDiv({ cls: "cmp-label", text: l });
+    };
+    if (t.total) stat2(`${t.taken}/${t.total}`, "doses today");
+    if (due.length) stat2(String(due.length), "due now", true);
+    if (t.bestStreak) stat2(String(t.bestStreak), "day streak");
+    if (!t.total) card.createDiv({ cls: "dash-muted", text: "No scheduled medications today." });
+    for (const d of t.due.slice(0, 4)) {
+      const row2 = card.createDiv({ cls: "cmp-row" });
+      row2.createSpan({ cls: "cmp-row-time", text: d.time || "any" });
+      row2.createSpan({ cls: "cmp-row-title", text: `${d.med}${d.amount ? ` \xB7 ${d.amount}` : ""}` });
+      row2.createSpan({ cls: "cmp-tag" + (d.overdue ? " is-warn" : ""), text: d.overdue ? "due" : "later" });
+    }
+    for (const a of t.asNeeded.filter((x) => x.takenToday > 0)) card.createDiv({ cls: "cmp-line dash-muted", text: `${a.med}: ${a.takenToday}${a.limit ? ` of ${a.limit}` : ""} today` });
+    const row = card.createDiv({ cls: "dash-btn-row" });
+    if (t.due.length) row.createEl("button", { cls: "dash-btn dash-btn-primary", text: "Log due" }).addEventListener("click", () => api.openLogDue());
+    row.createEl("button", { cls: "dash-btn", text: "As needed" }).addEventListener("click", () => api.openAsNeeded());
+    row.createEl("button", { cls: "dash-btn", text: "Symptoms" }).addEventListener("click", () => api.openSymptoms());
+  }
+};
 
 // src/panels/companions/discipline.ts
 var PLUGIN_ID = "meridian-meditations";
@@ -6685,7 +6758,7 @@ function migrateDailyWords(loaded) {
 
 // src/panels/registry.ts
 var CORE_PANELS = ["brief", "clock", "words", "todo", "agenda", "journal", "calendar", "search", "secondbrain", "actions", "shopping"];
-var COMPANION_PANELS = ["flights", "meals", "contacts", "discipline", "music", "wardrobe", "food", "commons", "treasury"];
+var COMPANION_PANELS = ["health", "flights", "meals", "contacts", "discipline", "music", "wardrobe", "food", "commons", "treasury"];
 var RETIRED_PANELS = ["places"];
 var PANEL_ORDER = [...CORE_PANELS, ...COMPANION_PANELS, ...RETIRED_PANELS];
 var PANEL_TITLES = {
@@ -6699,6 +6772,7 @@ var PANEL_TITLES = {
   secondbrain: "Second Brain",
   actions: "Quick Actions",
   shopping: "Shopping",
+  health: "Health",
   flights: "Flights",
   meals: "Meals",
   contacts: "Contacts",
@@ -6738,6 +6812,7 @@ function createPanels(order, enabled, plugin) {
     secondbrain: () => new SecondBrainPanel(plugin.secondBrain, FRIENDLY_SECOND_BRAIN_COPY),
     actions: () => new ActionsPanel(),
     shopping: () => new ShoppingPanel(),
+    health: () => new HealthPanel(),
     flights: () => new FlightsPanel(),
     meals: () => new MealsPanel(FRIENDLY_MEALS_COPY),
     contacts: () => new ContactsPanel(),
