@@ -1,3 +1,4 @@
 # Approved privacy-check findings, one fingerprint per line (from the scan output).
 # A fingerprint is a hash of where the finding is and what matched — never the text.
 # Add a short comment after each, e.g.:  0123456789abcdef  # airport name in Brainstormer's data
+9b351e1cecb108ba  # Brainstormer airport data: "Dauphin Barker Airport" (YDN, Manitoba), a real place name
