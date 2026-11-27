@@ -524,26 +524,82 @@
 
 /* ---------------------------------------------------------------- calendar */
 
-.dash-cal-nav { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 8px; }
-.dash-cal-month { font-weight: 600; min-width: 150px; text-align: center; cursor: pointer; }
-.dash-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
-.dash-cal-dow { text-align: center; font-size: 0.68em; color: var(--dash-text-muted); padding: 2px 0; }
-.dash-cal-day {
-	aspect-ratio: 1 / 1;
-	border: var(--dash-rule-weight) solid transparent;
-	background: var(--dash-surface-alt);
+.dash-cal-basebtn { margin-left: auto; }
+.dash-cal-nav { display: flex; align-items: center; gap: 6px; margin: 2px 0 10px; }
+.dash-cal-month {
+	flex: 1;
+	font-family: var(--dash-font-mono, monospace);
+	font-size: 0.78em;
+	font-weight: 600;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
 	color: var(--dash-text);
-	border-radius: var(--dash-radius);
+}
+.dash-root .dash-cal-navbtn {
+	min-height: 32px;
+	min-width: 32px;
+	padding: 0 9px;
+	background: var(--dash-surface-alt);
+	background-image: none;
+	box-shadow: none;
+	border: var(--dash-rule-weight) solid var(--dash-border);
+	border-radius: calc(var(--dash-radius) - 2px);
+	color: var(--dash-text-muted);
+	font-size: 0.78em;
 	cursor: pointer;
-	font-size: 0.8em;
+}
+.dash-root .dash-cal-navbtn:hover { color: var(--dash-text); border-color: var(--dash-accent); }
+.dash-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.dash-cal-dow {
+	text-align: center;
+	font-family: var(--dash-font-mono, monospace);
+	font-size: 0.6em;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--dash-text-muted);
+	padding-bottom: 2px;
+}
+.dash-cal-day {
+	position: relative;
+	aspect-ratio: 1 / 1;
+	min-height: 34px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
+	border: var(--dash-rule-weight) solid var(--dash-border);
+	border-radius: calc(var(--dash-radius) - 2px);
+	background: var(--dash-bg);
+	color: var(--dash-text-muted);
+	font-size: 0.82em;
+	font-variant-numeric: tabular-nums;
+	cursor: pointer;
+	user-select: none;
+	transition: border-color 0.1s, background 0.1s, color 0.1s;
 }
-.dash-cal-day:hover { border-color: var(--dash-accent); }
+.dash-cal-day:hover, .dash-cal-day:focus-visible { border-color: var(--dash-accent); color: var(--dash-text); outline: none; }
 .dash-cal-day.is-outside { opacity: 0.35; }
-.dash-cal-day.has-note { font-weight: 700; box-shadow: inset 0 -3px 0 var(--dash-accent-2); }
-.dash-cal-day.is-today { border-color: var(--dash-accent); color: var(--dash-accent); font-weight: 700; }
+.dash-cal-day.has-note {
+	background: color-mix(in srgb, var(--dash-accent-2) 14%, var(--dash-surface-alt));
+	border-color: color-mix(in srgb, var(--dash-accent-2) 55%, var(--dash-border));
+	color: var(--dash-text);
+}
+.dash-cal-day.is-today {
+	border-color: var(--dash-accent);
+	box-shadow: inset 0 0 0 1px var(--dash-accent);
+	color: var(--dash-accent);
+	font-weight: 600;
+}
+.dash-cal-dot {
+	position: absolute;
+	bottom: 4px;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 4px;
+	height: 4px;
+	border-radius: 50%;
+	background: var(--dash-accent);
+}
+.dash-cal-legend { font-size: 0.72em; font-style: italic; color: var(--dash-text-muted); margin: 10px 0 4px; }
 
 /* ---------------------------------------------------------------- meals */
 
@@ -1057,3 +1113,24 @@
 .cmp-globe { width: 100%; max-width: 280px; margin: 2px auto; aspect-ratio: 1; border-radius: 50%; overflow: hidden; cursor: pointer; }
 .cmp-globe svg { width: 100%; height: 100%; display: block; }
 .cmp-globe.is-empty { display: none; }
+
+/* Keep the Obsidian theme's button gloss (gradients, drop shadows) off the
+   dashboard's own controls, so every theme sees the same flat look. */
+.dash-root .dash-btn,
+.dash-root .dash-icon-btn,
+.dash-root .dash-qotd-add,
+.dash-root .dash-qotd-addbig {
+	background-image: none;
+	box-shadow: none;
+}
+
+/* Tabs on the desktop line up with the grid; sleek labels like the cards. */
+.dash-tabbar { max-width: 1600px; margin-left: auto; margin-right: auto; }
+.dash-root .dash-tab {
+	font-family: var(--dash-font-mono, monospace);
+	font-size: 0.7em;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	padding: 7px 14px;
+	background-image: none;
+}

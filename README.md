@@ -74,12 +74,13 @@ Nothing is deleted, and nothing you were using disappears:
 - New look: a new default theme, **Midnight**, and a quieter frame for every
   theme. Your chosen theme is kept.
 
-### Phone tabs
+### Tabs (phone and desktop)
 
-On a phone the dashboard can be split into tabs (e.g. *Today*, *Home*, *Notes*)
-instead of one long scroll: add tabs in **Settings → Daily Dashboard → Phone
-tabs**, star the one that opens first, and pick a tab for each panel. The desktop
-always shows everything.
+The dashboard can be split into tabs (e.g. *Today*, *Home*, *Notes*) instead of
+one long page. Add tabs in **Settings → Daily Dashboard → Tabs**, star the one
+that opens first, and pick a tab for each panel. Phone and desktop share the same
+tabs; each has its own switch (**Use tabs on a phone**, on by default, and **Use
+tabs on the desktop**, off by default).
 
 ### Everything syncs
 

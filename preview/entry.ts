@@ -6,6 +6,7 @@ import { DashView } from "../src/view";
 const files = new Map<string, string>();
 const today = new Date();
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+for (const n of [1, 2, 4, 5, 6, 9, 12]) { const d0 = new Date(today); d0.setDate(today.getDate() - n); files.set(`${ymd(d0)}.md`, "# Journal\nPlaceholder.\n"); }
 files.set(`${ymd(today)}.md`, "# Brain dump\n\n# Journal\nA calm morning. Placeholder journal text.\n\n# Reference tomorrow\n");
 files.set("Second brain/Garden redesign.md", "---\nstatus: active\n---\n");
 files.set("Second brain/Learn piano.md", "");
@@ -62,6 +63,7 @@ const plugin = new DailyDashPlugin(app, { id: "daily-dash", version: "dev" });
 	await plugin.onload();
 	if (params.get("theme")) plugin.settings.theme = params.get("theme");
 	if (params.get("words")) plugin.settings.dailyWords = params.get("words");
+	if (params.get("tabs")) { plugin.settings.tabs = [{ id: "t1", name: "Today" }, { id: "t2", name: "Notes" }]; plugin.settings.tabAssignments = { search: "t2", secondbrain: "t2", calendar: "t2" }; plugin.settings.desktopTabs = true; plugin.settings.defaultTabId = "t1"; }
 	const leaf = { app };
 	const view = new DashView(leaf, plugin);
 	document.body.className = "theme-" + (params.get("mode") ?? "dark");

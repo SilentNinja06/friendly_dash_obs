@@ -3859,7 +3859,7 @@ var AgendaPanel = class extends BasePanel2 {
       "click",
       () => new LocalEventModal(this.ctx.app, friendlyLocalEvents(this.ctx.plugin), void 0, () => this.rerender()).open()
     );
-    const goalsBtn = toolbar.createEl("button", { cls: "dash-btn", text: "\u{1F3AF} Week's goals" });
+    const goalsBtn = toolbar.createEl("button", { cls: "dash-btn", text: "Week's goals" });
     goalsBtn.setAttr("title", "Set a few goals for this week \u2014 they print at the top of the week planner");
     goalsBtn.addEventListener(
       "click",
@@ -3872,7 +3872,7 @@ var AgendaPanel = class extends BasePanel2 {
         FRIENDLY_WEEKLYGOALS_COPY
       ).open()
     );
-    const printBtn = toolbar.createEl("button", { cls: "dash-btn", text: "\u{1F5A8} Print week" });
+    const printBtn = toolbar.createEl("button", { cls: "dash-btn", text: "Print week" });
     printBtn.setAttr("title", "Open a printable week-at-a-glance planner for this week");
     printBtn.addEventListener("click", () => this.printWeek());
     const today4 = (0, import_obsidian27.moment)().format("YYYY-MM-DD");
@@ -4334,30 +4334,27 @@ var CalendarPanel = class extends BasePanel2 {
     this.searchTimer = null;
   }
   renderBody() {
-    placard2(this.el, "Calendar");
+    const head = placard2(this.el, "Calendar");
+    this.renderBaseButton(head);
     this.renderMonthNav();
     this.renderGrid();
-    this.renderBaseButton();
+    this.el.createDiv({ cls: "dash-cal-legend", text: "Days with a dot have a daily note. Tap any day to open it; an empty day is created from your daily-note template." });
     this.renderSearch();
   }
   // ------------------------------------------------------------- month grid
   renderMonthNav() {
     const nav = this.el.createDiv({ cls: "dash-cal-nav" });
-    const prev = nav.createEl("button", { cls: "dash-icon-btn", text: "\u2039", attr: { "aria-label": "Previous month" } });
-    prev.addEventListener("click", () => {
-      this.cursor = addMonths(this.cursor, -1);
+    const go = (to) => {
+      this.cursor = to;
       this.rerender();
-    });
-    const label = nav.createSpan({ cls: "dash-cal-month", text: (0, import_obsidian29.moment)(this.cursor).format("MMMM YYYY") });
-    label.addEventListener("click", () => {
-      this.cursor = startOfMonth(/* @__PURE__ */ new Date());
-      this.rerender();
-    });
-    const next = nav.createEl("button", { cls: "dash-icon-btn", text: "\u203A", attr: { "aria-label": "Next month" } });
-    next.addEventListener("click", () => {
-      this.cursor = addMonths(this.cursor, 1);
-      this.rerender();
-    });
+    };
+    const prev = nav.createEl("button", { cls: "dash-cal-navbtn", text: "\u2039", attr: { "aria-label": "Previous month" } });
+    prev.addEventListener("click", () => go(addMonths(this.cursor, -1)));
+    nav.createDiv({ cls: "dash-cal-month", text: (0, import_obsidian29.moment)(this.cursor).format("MMMM YYYY") });
+    const next = nav.createEl("button", { cls: "dash-cal-navbtn", text: "\u203A", attr: { "aria-label": "Next month" } });
+    next.addEventListener("click", () => go(addMonths(this.cursor, 1)));
+    const today4 = nav.createEl("button", { cls: "dash-cal-navbtn", text: "Today" });
+    today4.addEventListener("click", () => go(startOfMonth(/* @__PURE__ */ new Date())));
   }
   renderGrid() {
     const grid = this.el.createDiv({ cls: "dash-cal-grid" });
@@ -4371,12 +4368,22 @@ var CalendarPanel = class extends BasePanel2 {
     for (let i = 0; i < 42; i++) {
       const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
       const dateStr = fmt(d);
-      const cell = grid.createEl("button", { cls: "dash-cal-day", text: String(d.getDate()) });
+      const cell = grid.createDiv({ cls: "dash-cal-day", attr: { role: "button", tabindex: "0" } });
+      cell.createSpan({ cls: "dash-cal-num", text: String(d.getDate()) });
       if (d.getMonth() !== month) cell.addClass("is-outside");
       if (dateStr === todayStr2) cell.addClass("is-today");
-      if (getDailyNoteFile(this.ctx.app, dateStr)) cell.addClass("has-note");
+      if (getDailyNoteFile(this.ctx.app, dateStr)) {
+        cell.addClass("has-note");
+        cell.createSpan({ cls: "dash-cal-dot" });
+      }
       cell.setAttr("aria-label", (0, import_obsidian29.moment)(d).format("dddd, MMMM D, YYYY"));
       cell.addEventListener("click", () => void this.openDay(dateStr));
+      cell.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          void this.openDay(dateStr);
+        }
+      });
     }
   }
   async openDay(dateStr) {
@@ -4389,9 +4396,8 @@ var CalendarPanel = class extends BasePanel2 {
     }
   }
   // -------------------------------------------------------------- base button
-  renderBaseButton() {
-    const row = this.el.createDiv({ cls: "dash-btn-row" });
-    const btn = row.createEl("button", { cls: "dash-btn", text: "Open all-days table" });
+  renderBaseButton(head) {
+    const btn = head.createEl("button", { cls: "dash-btn dash-btn-sm dash-cal-basebtn", text: "All days", attr: { "aria-label": "Open the table of all daily notes" } });
     btn.addEventListener("click", async () => {
       try {
         const path = this.ctx.settings().calendarBasePath;
@@ -6871,6 +6877,7 @@ var DEFAULT_SETTINGS = {
   panelColumns: {},
   panelSpans: {},
   mobileTabs: true,
+  desktopTabs: false,
   tabs: [],
   tabAssignments: {},
   defaultTabId: null,
@@ -7125,12 +7132,18 @@ var DashSettingTab = class extends import_obsidian41.PluginSettingTab {
     for (const l of SUPPORT_LINKS) {
       new import_obsidian41.Setting(containerEl).setName(l.label).setDesc(l.blurb).addButton((b) => b.setButtonText(l.cta).onClick(() => window.open(l.url)));
     }
-    new import_obsidian41.Setting(containerEl).setName("Phone tabs").setDesc(
-      "On a phone, group panels into tabs instead of one long scroll (the desktop always shows everything). Add tabs here, star the one that opens first, then pick a tab for each panel in the list above \u2014 panels without a tab go to the starred one."
+    new import_obsidian41.Setting(containerEl).setName("Tabs").setDesc(
+      "Group panels into tabs instead of one long page. The same tabs are used on a phone and on the desktop, and each has its own switch. Add tabs here, star the one that opens first, then pick a tab for each panel in the list above \u2014 panels without a tab go to the starred one."
     ).setHeading();
     new import_obsidian41.Setting(containerEl).setName("Use tabs on a phone").setDesc("When on and at least one tab exists, the phone dashboard shows a tab bar.").addToggle(
       (t) => t.setValue(s.mobileTabs).onChange(async (v) => {
         s.mobileTabs = v;
+        await this.saveLayout();
+      })
+    );
+    new import_obsidian41.Setting(containerEl).setName("Use tabs on the desktop").setDesc("When on and at least one tab exists, the desktop dashboard shows the same tab bar. Off: the desktop shows every panel at once.").addToggle(
+      (t) => t.setValue(s.desktopTabs).onChange(async (v) => {
+        s.desktopTabs = v;
         await this.saveLayout();
       })
     );
@@ -7816,7 +7829,7 @@ var DashView = class extends import_obsidian43.ItemView {
     root.dataset.theme = this.plugin.settings.theme;
     this.renderChrome(root);
     const s = this.plugin.settings;
-    const tabsActive = import_obsidian43.Platform.isMobile && s.mobileTabs && s.tabs.length > 0;
+    const tabsActive = s.tabs.length > 0 && (import_obsidian43.Platform.isMobile ? s.mobileTabs : s.desktopTabs);
     let visible = null;
     if (tabsActive) {
       if (!this.activeTabId || !s.tabs.some((t) => t.id === this.activeTabId)) this.activeTabId = this.defaultTabId(s);
@@ -7827,7 +7840,8 @@ var DashView = class extends import_obsidian43.ItemView {
     let panels = createPanels(s.panelOrder, s.enabledPanels, this.plugin);
     if (visible) panels = panels.filter((p) => visible.has(p.id));
     const ctx = this.ctx();
-    const layout = computeLayout(s.panelOrder, s.enabledPanels, s.panelColumns, s.panelSpans);
+    const enabledHere = visible ? Object.fromEntries(s.panelOrder.map((id) => [id, s.enabledPanels[id] !== false && visible.has(id)])) : s.enabledPanels;
+    const layout = computeLayout(s.panelOrder, enabledHere, s.panelColumns, s.panelSpans);
     const placeById = new Map(layout.placements.map((p) => [p.id, p]));
     if (layout.configured) {
       this.grid.addClass("dash-grid-cols");

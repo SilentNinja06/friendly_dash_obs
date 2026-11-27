@@ -190,9 +190,9 @@ off the rest.
    Wardrobe, Food log…) appear by themselves once you install that plugin.
    **Settings → Companion plugins** lists them with where to get each one.
 
-**On a phone:** under **Phone tabs**, click **+ Add tab** a few times, give the
-tabs names, then use the tab dropdown on each panel row to put panels where you
-want them.
+**Tabs:** under **Tabs**, click **+ Add tab** a few times, give the tabs names,
+then use the tab dropdown on each panel row to put panels where you want them.
+Tabs are on for phones; turn on **Use tabs on the desktop** to use them there too.
 
 ---
 

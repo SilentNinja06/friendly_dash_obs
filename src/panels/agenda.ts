@@ -77,7 +77,7 @@ export class AgendaPanel extends BasePanel {
 		addBtn.addEventListener("click", () =>
 			new LocalEventModal(this.ctx.app, friendlyLocalEvents(this.ctx.plugin), undefined, () => this.rerender()).open()
 		);
-		const goalsBtn = toolbar.createEl("button", { cls: "dash-btn", text: "🎯 Week's goals" });
+		const goalsBtn = toolbar.createEl("button", { cls: "dash-btn", text: "Week's goals" });
 		goalsBtn.setAttr("title", "Set a few goals for this week — they print at the top of the week planner");
 		goalsBtn.addEventListener("click", () =>
 			new WeeklyGoalsModal(
@@ -89,7 +89,7 @@ export class AgendaPanel extends BasePanel {
 				FRIENDLY_WEEKLYGOALS_COPY
 			).open()
 		);
-		const printBtn = toolbar.createEl("button", { cls: "dash-btn", text: "🖨 Print week" });
+		const printBtn = toolbar.createEl("button", { cls: "dash-btn", text: "Print week" });
 		printBtn.setAttr("title", "Open a printable week-at-a-glance planner for this week");
 		printBtn.addEventListener("click", () => this.printWeek());
 
